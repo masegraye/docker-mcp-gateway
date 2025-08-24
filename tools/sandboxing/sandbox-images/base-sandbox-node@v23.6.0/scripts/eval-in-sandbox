@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Usage: eval-in-sandbox <url> <script-path>
+# Example: eval-in-sandbox http://localhost:8081/eval ./examples/hello.js
+
+# Required dependencies
+REQUIRED_TOOLS=("curl" "jq")
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+    
+    for tool in "${REQUIRED_TOOLS[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing+=("$tool")
+        fi
+    done
+    
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Error: Missing required dependencies: ${missing[*]}" >&2
+        exit 1
+    fi
+}
+
+usage() {
+    echo "Usage: eval-in-sandbox <url> <script-path>"
+    echo ""
+    echo "Examples:"
+    echo "  eval-in-sandbox http://localhost:8081/eval ./examples/hello.js"
+    echo "  eval-in-sandbox http://localhost:8081/eval ./examples/typescript-demo.ts"
+    echo ""
+    echo "The script automatically detects language based on file extension:"
+    echo "  .js files -> javascript"
+    echo "  .ts files -> typescript"
+    exit 1
+}
+
+# Check dependencies first
+check_dependencies
+
+if [ $# -ne 2 ]; then
+    usage
+fi
+
+URL="$1"
+SCRIPT_PATH="$2"
+
+if [ ! -f "$SCRIPT_PATH" ]; then
+    echo "Error: Script file '$SCRIPT_PATH' not found" >&2
+    exit 1
+fi
+
+# Detect language from file extension
+LANGUAGE=""
+case "$SCRIPT_PATH" in
+    *.js)
+        LANGUAGE="javascript"
+        ;;
+    *.ts)
+        LANGUAGE="typescript"
+        ;;
+    *)
+        echo "Error: Unsupported file extension. Use .js or .ts" >&2
+        exit 1
+        ;;
+esac
+
+# Read the script content
+CODE=$(cat "$SCRIPT_PATH")
+
+# Create JSON payload
+JSON_PAYLOAD=$(jq -n \
+    --arg code "$CODE" \
+    --arg language "$LANGUAGE" \
+    '{code: $code, language: $language}')
+
+echo "Executing $LANGUAGE script: $SCRIPT_PATH"
+echo "URL: $URL"
+echo ""
+
+# Send request and format response
+curl -s -X POST "$URL" \
+    -H "Content-Type: application/json" \
+    -d "$JSON_PAYLOAD" | jq '
+    if .exitCode == 0 then
+        "✅ Success (exit code: \(.exitCode))\n\nOutput:\n\(.stdout)" +
+        (if .stderr != "" then "\n\nStderr:\n\(.stderr)" else "" end)
+    else
+        "❌ Failed (exit code: \(.exitCode))" +
+        (if .error != "" then "\n\nError: \(.error)" else "" end) +
+        (if .stdout != "" then "\n\nStdout:\n\(.stdout)" else "" end) +
+        (if .stderr != "" then "\n\nStderr:\n\(.stderr)" else "" end)
+    end' -r
+
+echo ""

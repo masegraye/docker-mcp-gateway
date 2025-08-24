@@ -81,6 +81,21 @@ The API evolution would mirror the capability layers: **API v1a** could be as si
 
 Node.js v23.6.0 (released January 2025) introduced native TypeScript support, allowing direct execution of `.ts`, `.mts`, and `.cts` files without dependencies like `ts-node` or manual compilation. This significantly simplifies our Layer 1a implementation since we can execute TypeScript code directly using `node script.ts` without any build steps. The official Docker images are already available as `node:23.6.0`, `node:23.6.0-slim`, `node:23.6.0-alpine`, etc., maintained by the Node.js organization on Docker Hub. For our minimal sandbox API, this means we could support both JavaScript and TypeScript code evaluation in Layer 1a using the same base image and execution model. This eliminates the complexity of choosing between JavaScript-only execution or adding TypeScript compilation infrastructure, making the initial implementation even simpler while providing broader language support from day one.
 
+- **Layer 1a Implementation Complete**: Built and deployed working prototype of base sandbox with raw code evaluation capabilities
+
+**Built Images** (temporary - will be replaced with official images later):
+- `masongraye827/gw-sandbox-base-node:v23.6.0` - Layer 1a implementation with JavaScript and TypeScript support
+- `masongraye827/gw-sandbox-base-node:v23` - Latest minor build of the v23 series
+
+**Implementation Details**:
+- Go HTTP server providing `/eval` and `/health` endpoints with 30-second timeout protection
+- Multi-stage Docker build using Node.js v23.6.0-alpine for native TypeScript support
+- Security hardening: non-root user, resource limits, capability dropping, read-only filesystem
+- Complete testing infrastructure with helper scripts for easy API interaction
+- Located at: `tools/sandboxing/sandbox-images/base-sandbox-node@v23.6.0/`
+
+This prototype validates the Layer 1a architecture and provides a foundation for building Layer 1b (code with dependencies) and subsequent layers. The implementation demonstrates the minimal surface area approach while providing both JavaScript and TypeScript execution capabilities in a secure, containerized environment.
+
 ## 2. Analysis
 *This section will organize and examine the rough thoughts more systematically.*
 

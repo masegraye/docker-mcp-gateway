@@ -178,12 +178,23 @@ func (m *Manager) ExchangeCode(ctx context.Context, code string, state string) e
 }
 
 // RevokeToken revokes an OAuth token for a server
-func (m *Manager) RevokeToken(_ context.Context, serverName string) error {
+func (m *Manager) RevokeToken(ctx context.Context, serverName string) error {
 	dcrClient, err := m.dcrManager.GetDCRClient(serverName)
 	if err != nil {
 		return fmt.Errorf("DCR client not found for %s: %w", serverName, err)
 	}
 
+	if dcrClient.RevocationEndpoint != "" {
+		token, err := m.tokenStore.Retrieve(dcrClient)
+		if err != nil {
+			return err
+		}
+		if err := RevokeTokenAtProvider(ctx, dcrClient, token); err != nil {
+			return err
+		}
+	} else {
+		log.Logf("- OAuth provider for %s does not advertise revocation; deleting local token only", serverName)
+	}
 	return m.tokenStore.Delete(dcrClient)
 }
 

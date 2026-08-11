@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	seclient "github.com/docker/secrets-engine/client"
@@ -13,6 +14,11 @@ import (
 	"github.com/docker/mcp-gateway/pkg/workingset"
 )
 
+type ceRevokeManager interface {
+	RevokeToken(context.Context, string) error
+	DeleteDCRClient(string) error
+}
+
 // Function pointers for testability (same pattern as pkg/workingset/oauth.go).
 var (
 	revokeCEModeFunc        = revokeCEMode
@@ -23,6 +29,12 @@ var (
 	// requiring docker pass, Docker Desktop, or a real database.
 	deleteOAuthTokenFunc      = secret.DeleteOAuthToken
 	deleteDCRClientFunc       = secret.DeleteDCRClient
+	getCommunityDCRClientFunc = pkgoauth.GetDCRClientFromDockerPass
+	getCommunityTokenFunc     = pkgoauth.GetTokenFromDockerPass
+	revokeProviderTokenFunc   = pkgoauth.RevokeTokenAtProvider
+	newCERevokeManagerFunc    = func() ceRevokeManager {
+		return pkgoauth.NewManager(pkgoauth.NewReadWriteCredentialHelper())
+	}
 	desktopDeleteOAuthAppFunc = func(ctx context.Context, app string) error {
 		return desktop.NewAuthClient().DeleteOAuthApp(ctx, app)
 	}
@@ -81,13 +93,12 @@ func revokeDesktopMode(ctx context.Context, app string) error {
 // revokeCEMode handles revoke in standalone CE mode
 // Matches Desktop behavior: deletes both token and DCR client
 func revokeCEMode(ctx context.Context, app string) error {
-	credHelper := pkgoauth.NewReadWriteCredentialHelper()
-	manager := pkgoauth.NewManager(credHelper)
+	manager := newCERevokeManagerFunc()
 
-	// Delete OAuth token
+	// Revoke at the provider before deleting local credentials. If remote
+	// revocation fails, preserve both the token and DCR metadata for retry.
 	if err := manager.RevokeToken(ctx, app); err != nil {
-		// Token might not exist, continue to DCR deletion
-		fmt.Printf("Note: %v\n", err)
+		return fmt.Errorf("failed to revoke OAuth access: %w", err)
 	}
 
 	// Delete DCR client (matches Desktop behavior)
@@ -109,10 +120,43 @@ func revokeCommunityMode(ctx context.Context, app string) error {
 		return fmt.Errorf("invalid server name %q: %w", app, err)
 	}
 
-	// Delete OAuth token from docker pass
+	dcrClient, err := getCommunityDCRClientFunc(ctx, app)
+	if err != nil {
+		if errors.Is(err, secret.ErrSecretNotFound) {
+			fmt.Printf("Note: %v\n", err)
+			if err := deleteOAuthTokenFunc(ctx, appID); err != nil {
+				fmt.Printf("Note: %v\n", err)
+			}
+			if err := deleteDCRClientFunc(ctx, appID); err != nil {
+				fmt.Printf("Note: %v\n", err)
+			}
+			cleanStaleDesktopEntriesFunc(ctx, app)
+			fmt.Printf("OAuth access revoked for %s\n", app)
+			return nil
+		}
+		return fmt.Errorf("failed to load DCR client for provider revocation: %w", err)
+	}
+	providerRevoked := false
+	if dcrClient.RevocationEndpoint != "" {
+		token, err := getCommunityTokenFunc(ctx, app)
+		if err != nil {
+			return fmt.Errorf("failed to load OAuth token for provider revocation: %w", err)
+		}
+		if err := revokeProviderTokenFunc(ctx, dcrClient, token); err != nil {
+			return fmt.Errorf("failed to revoke OAuth access: %w", err)
+		}
+		providerRevoked = true
+	} else {
+		fmt.Printf("Note: OAuth provider for %s does not advertise revocation; deleting local token only\n", app)
+	}
+
+	// Delete the local token after provider revocation succeeds, or immediately
+	// when the provider does not support remote revocation.
 	if err := deleteOAuthTokenFunc(ctx, appID); err != nil {
-		// Token might not exist, continue to DCR deletion
-		fmt.Printf("Note: %v\n", err)
+		if providerRevoked {
+			return fmt.Errorf("provider token revoked but failed to delete local OAuth token: %w", err)
+		}
+		return fmt.Errorf("failed to delete local OAuth token: %w", err)
 	}
 
 	// Delete DCR client from docker pass (soft failure -- entry may not exist

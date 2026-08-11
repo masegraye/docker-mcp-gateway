@@ -76,7 +76,7 @@ When clients query available capabilities:
 
 #### Tool Calls
 - **`mcp.tool.calls`** - Counter of tool invocations
-- **`mcp.tool.duration`** - Histogram of tool execution time (milliseconds)
+- **`mcp.tool.duration`** - Histogram of end-to-end tool call handling time, including validation and policy checks (milliseconds)
 - **`mcp.tool.errors`** - Counter of tool execution failures
 
 #### Prompt Operations

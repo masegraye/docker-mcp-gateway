@@ -21,18 +21,20 @@ const (
 // Client represents a dynamically registered OAuth client
 // Simplified from Pinata - removed State field (not needed for CE mode)
 type Client struct {
-	AuthorizationEndpoint string    `json:"authorizationEndpoint,omitempty"`
-	AuthorizationServer   string    `json:"authorizationServer,omitempty"`
-	ClientID              string    `json:"clientId,omitempty"`
-	ClientName            string    `json:"clientName,omitempty"`
-	ProviderName          string    `json:"providerName"`
-	RedirectURI           string    `json:"redirectUri,omitempty"`
-	RegisteredAt          time.Time `json:"registeredAt"`
-	RequiredScopes        []string  `json:"requiredScopes,omitempty"`
-	ResourceURL           string    `json:"resourceUrl,omitempty"`
-	ScopesSupported       []string  `json:"scopesSupported,omitempty"`
-	ServerName            string    `json:"serverName"`
-	TokenEndpoint         string    `json:"tokenEndpoint,omitempty"`
+	AuthorizationEndpoint                  string    `json:"authorizationEndpoint,omitempty"`
+	AuthorizationServer                    string    `json:"authorizationServer,omitempty"`
+	ClientID                               string    `json:"clientId,omitempty"`
+	ClientName                             string    `json:"clientName,omitempty"`
+	ProviderName                           string    `json:"providerName"`
+	RevocationEndpoint                     string    `json:"revocationEndpoint,omitempty"`
+	RevocationEndpointAuthMethodsSupported []string  `json:"revocationEndpointAuthMethodsSupported,omitempty"`
+	RedirectURI                            string    `json:"redirectUri,omitempty"`
+	RegisteredAt                           time.Time `json:"registeredAt"`
+	RequiredScopes                         []string  `json:"requiredScopes,omitempty"`
+	ResourceURL                            string    `json:"resourceUrl,omitempty"`
+	ScopesSupported                        []string  `json:"scopesSupported,omitempty"`
+	ServerName                             string    `json:"serverName"`
+	TokenEndpoint                          string    `json:"tokenEndpoint,omitempty"`
 }
 
 // Credentials provides storage for DCR client metadata via credential helper

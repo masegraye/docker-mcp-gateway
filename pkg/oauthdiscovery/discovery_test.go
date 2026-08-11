@@ -31,3 +31,20 @@ func TestBuildRFC8414WellKnownURLAllowsPublicHTTPSIssuer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://8.8.8.8/.well-known/oauth-authorization-server/oauth", metadataURL)
 }
+
+func TestValidateAuthorizationServerIssuer(t *testing.T) {
+	require.NoError(t, validateAuthorizationServerIssuer(
+		"https://auth.example.com/tenant",
+		"https://auth.example.com/tenant",
+	))
+
+	for _, issuer := range []string{
+		"https://attacker.example/tenant",
+		"https://auth.example.com/other-tenant",
+		"https://auth.example.com/tenant/",
+	} {
+		err := validateAuthorizationServerIssuer("https://auth.example.com/tenant", issuer)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not match requested issuer")
+	}
+}

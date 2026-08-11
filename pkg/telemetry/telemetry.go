@@ -116,7 +116,7 @@ func Init() {
 	}
 
 	ToolCallDuration, err = meter.Float64Histogram("mcp.tool.duration",
-		metric.WithDescription("Duration of tool call execution"),
+		metric.WithDescription("Duration of tool call handling, including validation and policy checks"),
 		metric.WithUnit("ms"))
 	if err != nil {
 		// Log error but don't fail

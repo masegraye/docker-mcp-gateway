@@ -242,7 +242,7 @@ func (cp *clientPool) InvalidateOAuthClients(provider string) {
 	}
 }
 
-func (cp *clientPool) runToolContainer(ctx context.Context, tool catalog.Tool, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+func (cp *clientPool) runToolContainer(ctx context.Context, tool catalog.Tool, params *mcp.CallToolParams) *mcp.CallToolResult {
 	args := cp.baseArgs(tool.Name)
 
 	// Attach the MCP servers to the same network as the gateway.
@@ -272,7 +272,7 @@ func (cp *clientPool) runToolContainer(ctx context.Context, tool catalog.Tool, p
 					Text: fmt.Sprintf("validate volume for %s: %v", tool.Name, err),
 				}},
 				IsError: true,
-			}, nil
+			}
 		}
 
 		args = append(args, "-v", mount)
@@ -310,7 +310,7 @@ func (cp *clientPool) runToolContainer(ctx context.Context, tool catalog.Tool, p
 				Text: string(out),
 			}},
 			IsError: true,
-		}, nil
+		}
 	}
 
 	return &mcp.CallToolResult{
@@ -318,7 +318,7 @@ func (cp *clientPool) runToolContainer(ctx context.Context, tool catalog.Tool, p
 			Text: string(out),
 		}},
 		IsError: false,
-	}, nil
+	}
 }
 
 func (cp *clientPool) baseArgs(name string) []string {

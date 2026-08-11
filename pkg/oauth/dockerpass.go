@@ -244,7 +244,7 @@ func GetDCRClientFromDockerPass(ctx context.Context, serverName string) (dcr.Cli
 	}
 	env, err := secret.GetSecret(ctx, dcrID)
 	if errors.Is(err, secret.ErrSecretNotFound) {
-		return dcr.Client{}, fmt.Errorf("DCR client not found for %s", serverName)
+		return dcr.Client{}, fmt.Errorf("DCR client not found for %s: %w", serverName, secret.ErrSecretNotFound)
 	}
 	if err != nil {
 		return dcr.Client{}, fmt.Errorf("failed to query Secrets Engine for DCR client %s: %w", serverName, err)

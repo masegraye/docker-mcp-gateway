@@ -32,7 +32,7 @@ func TestRevokeTokenAtProviderRevokesRefreshAndAccessTokens(t *testing.T) {
 		mu.Lock()
 		requests = append(requests, r.PostForm)
 		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
 
@@ -77,7 +77,7 @@ func TestRevokeTokenAtProviderDoesNotFollowRedirects(t *testing.T) {
 	assert.False(t, redirectTargetCalled, "bearer credential must not be forwarded to a redirect target")
 }
 
-func TestManagerRevokePreservesLocalTokenWithoutProviderEndpoint(t *testing.T) {
+func TestManagerRevokeDeletesLocalTokenWithoutProviderEndpoint(t *testing.T) {
 	manager := setupTestManager(t)
 	serverName := "test-server"
 	setupTestDCRClient(t, manager, serverName)
@@ -86,11 +86,8 @@ func TestManagerRevokePreservesLocalTokenWithoutProviderEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, manager.tokenStore.Save(dcrClient, &oauth2.Token{AccessToken: "access-secret"}))
 
-	err = manager.RevokeToken(t.Context(), serverName)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not advertise a revocation endpoint")
-
-	token, retrieveErr := manager.tokenStore.Retrieve(dcrClient)
-	require.NoError(t, retrieveErr)
-	assert.Equal(t, "access-secret", token.AccessToken)
+	require.NoError(t, manager.RevokeToken(t.Context(), serverName))
+	_, retrieveErr := manager.tokenStore.Retrieve(dcrClient)
+	require.Error(t, retrieveErr)
+	assert.Contains(t, retrieveErr.Error(), "token not found")
 }

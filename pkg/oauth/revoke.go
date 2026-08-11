@@ -13,9 +13,17 @@ import (
 	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 )
 
-// RevokeTokenAtProvider invalidates the refresh and access tokens at the
-// provider before callers remove their local copy. Redirects are deliberately
-// not followed because the request body contains bearer credentials.
+// RevokeTokenAtProvider invalidates the provider-side refresh and access tokens
+// per RFC 7009 before the caller performs local cleanup.
+//
+// On any non-nil return, provider-side revocation was not confirmed; callers
+// must preserve the local token so the user can retry. Redirects are not
+// followed because the request body contains bearer credentials, and any 3xx
+// response is reported as an error by the status validation below.
+//
+// MCP Gateway registers public DCR clients with token_endpoint_auth_method=none
+// and stores no client secret, so revocation identifies the client with
+// client_id only; confidential-client authentication is not supported here.
 func RevokeTokenAtProvider(ctx context.Context, client dcr.Client, token *oauth2.Token) error {
 	if client.RevocationEndpoint == "" {
 		return fmt.Errorf("OAuth provider for %s does not advertise a revocation endpoint; local token was preserved", client.ServerName)
@@ -72,7 +80,7 @@ func RevokeTokenAtProvider(ctx context.Context, client dcr.Client, token *oauth2
 			return fmt.Errorf("revoking %s for %s: %w", item.hint, client.ServerName, err)
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return fmt.Errorf("revoking %s for %s: provider returned HTTP %d", item.hint, client.ServerName, resp.StatusCode)
 		}
 	}

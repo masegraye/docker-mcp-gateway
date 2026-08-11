@@ -31,7 +31,7 @@ func canUseLegacyTokenCredentialKey(dcrClient dcr.Client) bool {
 	return !strings.Contains(dcrClient.ProviderName, "/")
 }
 
-func getTokenCredential(helper credentials.Helper, dcrClient dcr.Client) (string, error) {
+func getTokenCredential(helper credentials.Helper, dcrClient dcr.Client, migrateLegacy bool) (string, error) {
 	key := tokenCredentialKey(dcrClient)
 	_, secret, err := helper.Get(key)
 	if err == nil {
@@ -45,6 +45,9 @@ func getTokenCredential(helper credentials.Helper, dcrClient dcr.Client) (string
 	username, secret, err := helper.Get(legacyKey)
 	if err != nil {
 		return "", err
+	}
+	if !migrateLegacy {
+		return secret, nil
 	}
 
 	// Transparently migrate unambiguous legacy entries. Migration must finish
@@ -107,7 +110,7 @@ func (t *TokenStore) Save(dcrClient dcr.Client, token *oauth2.Token) error {
 
 // Retrieve retrieves an OAuth token from the credential helper
 func (t *TokenStore) Retrieve(dcrClient dcr.Client) (*oauth2.Token, error) {
-	encoded, err := getTokenCredential(t.credentialHelper, dcrClient)
+	encoded, err := getTokenCredential(t.credentialHelper, dcrClient, true)
 	if err != nil {
 		if credentials.IsErrCredentialsNotFound(err) {
 			return nil, fmt.Errorf("token not found for %s", dcrClient.ServerName)

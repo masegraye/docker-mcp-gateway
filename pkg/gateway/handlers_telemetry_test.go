@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -17,6 +18,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/docker/mcp-gateway/pkg/catalog"
+	"github.com/docker/mcp-gateway/pkg/config"
+	"github.com/docker/mcp-gateway/pkg/policy"
 	"github.com/docker/mcp-gateway/pkg/telemetry"
 )
 
@@ -275,6 +278,33 @@ func TestTelemetryErrorRecording(t *testing.T) {
 		}
 	}
 	assert.True(t, foundErrorCounter, "Error counter not found")
+}
+
+func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
+	spanRecorder, _ := setupTestTelemetry(t)
+	policyClient := newMockPolicyClient()
+	policyClient.deny("poci-server", "dangerous-tool", policy.ActionInvoke, "blocked")
+	gateway := &Gateway{
+		policyClient: policyClient,
+		configuration: Configuration{
+			serverNames: []string{"poci-server"},
+			servers: map[string]catalog.Server{
+				"poci-server": {Type: "poci"},
+			},
+			tools: config.ToolsConfig{ServerTools: map[string][]string{}},
+		},
+	}
+	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "dangerous-tool"})
+
+	_, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "dangerous-tool"},
+	})
+	require.Error(t, err)
+
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "mcp.tool.call", spans[0].Name())
+	assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
 }
 
 // TestHandlerInstrumentationIntegration is a placeholder for full integration test

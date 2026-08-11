@@ -3,6 +3,7 @@ package oauth
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/docker/docker-credential-helpers/credentials"
@@ -12,6 +13,18 @@ import (
 
 	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 )
+
+type readOnlyCredentialHelper struct {
+	credentials.Helper
+}
+
+func (readOnlyCredentialHelper) Add(_ *credentials.Credentials) error {
+	return errors.New("credential helper is read-only")
+}
+
+func (readOnlyCredentialHelper) Delete(_ string) error {
+	return errors.New("credential helper is read-only")
+}
 
 func TestTokenCredentialKeySeparatesEndpointAndProvider(t *testing.T) {
 	victim := dcr.Client{
@@ -72,6 +85,26 @@ func TestTokenStoreMigratesUnambiguousLegacyKey(t *testing.T) {
 	assert.Equal(t, token.AccessToken, retrieved.AccessToken)
 	assert.Contains(t, helper.store, tokenCredentialKey(client))
 	assert.NotContains(t, helper.store, legacyTokenCredentialKey(client))
+}
+
+func TestGetTokenCredentialReadsLegacyKeyWithoutMigratingThroughReadOnlyHelper(t *testing.T) {
+	helper := newFakeCredentialHelper()
+	client := dcr.Client{
+		ServerName:            "victim",
+		ProviderName:          "victim",
+		AuthorizationEndpoint: "https://auth.example/oauth",
+	}
+	require.NoError(t, helper.Add(&credentials.Credentials{
+		ServerURL: legacyTokenCredentialKey(client),
+		Username:  "oauth2_victim",
+		Secret:    "legacy-token",
+	}))
+
+	secret, err := getTokenCredential(readOnlyCredentialHelper{Helper: helper}, client, false)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-token", secret)
+	assert.Contains(t, helper.store, legacyTokenCredentialKey(client))
+	assert.NotContains(t, helper.store, tokenCredentialKey(client))
 }
 
 func TestTokenStoreRoundTripWithSlashBearingProvider(t *testing.T) {

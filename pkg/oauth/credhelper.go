@@ -96,7 +96,7 @@ func (h *CredentialHelper) getOAuthTokenCE(serverName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no DCR client found for %s: %w", serverName, err)
 	}
-	tokenSecret, err := getTokenCredential(h.credentialHelper, client)
+	tokenSecret, err := getTokenCredential(h.credentialHelper, client, false)
 	if err != nil {
 		if credentials.IsErrCredentialsNotFound(err) {
 			return "", fmt.Errorf("OAuth token not found for %s. Run 'docker mcp oauth authorize %s' to authenticate", serverName, serverName)
@@ -177,7 +177,7 @@ func (h *CredentialHelper) tokenExistsCE(serverID seclient.ID) (bool, error) {
 	if err != nil {
 		return false, nil // No DCR client = no token
 	}
-	tokenSecret, err := getTokenCredential(h.credentialHelper, client)
+	tokenSecret, err := getTokenCredential(h.credentialHelper, client, false)
 	if err != nil || tokenSecret == "" {
 		return false, nil
 	}
@@ -278,7 +278,7 @@ func (h *CredentialHelper) getTokenStatusCE(serverID seclient.ID) (TokenStatus, 
 	if err != nil {
 		return TokenStatus{Valid: false}, fmt.Errorf("no DCR client found for %s: %w", serverName, err)
 	}
-	tokenSecret, err := getTokenCredential(h.credentialHelper, client)
+	tokenSecret, err := getTokenCredential(h.credentialHelper, client, false)
 	if err != nil {
 		if credentials.IsErrCredentialsNotFound(err) {
 			return TokenStatus{Valid: false}, fmt.Errorf("OAuth token not found for %s", serverName)

@@ -184,12 +184,16 @@ func (m *Manager) RevokeToken(ctx context.Context, serverName string) error {
 		return fmt.Errorf("DCR client not found for %s: %w", serverName, err)
 	}
 
-	token, err := m.tokenStore.Retrieve(dcrClient)
-	if err != nil {
-		return err
-	}
-	if err := RevokeTokenAtProvider(ctx, dcrClient, token); err != nil {
-		return err
+	if dcrClient.RevocationEndpoint != "" {
+		token, err := m.tokenStore.Retrieve(dcrClient)
+		if err != nil {
+			return err
+		}
+		if err := RevokeTokenAtProvider(ctx, dcrClient, token); err != nil {
+			return err
+		}
+	} else {
+		log.Logf("- OAuth provider for %s does not advertise revocation; deleting local token only", serverName)
 	}
 	return m.tokenStore.Delete(dcrClient)
 }

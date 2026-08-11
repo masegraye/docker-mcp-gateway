@@ -43,20 +43,6 @@ func inferServerTransportType(serverConfig *catalog.ServerConfig) string {
 
 func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if g.policyClient != nil {
-			policyReq := g.configuration.policyRequest(serverName, tool.Name, policy.ActionInvoke)
-			decision, err := g.policyClient.Evaluate(ctx, policyReq)
-			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
-			submitAuditEvent(g.policyClient, event)
-			if err != nil {
-				telemetry.RecordToolError(ctx, nil, serverName, "docker", req.Params.Name)
-				return nil, fmt.Errorf("policy check failed for %s/%s: %w", serverName, tool.Name, err)
-			}
-			if !decision.Allowed {
-				return nil, fmt.Errorf("policy denied tool %s on server %s: %s", tool.Name, serverName, decision.Reason)
-			}
-		}
-
 		clientName := ""
 		if clientInfo := auditClientInfoFromSession(req.Session); clientInfo != nil {
 			clientName = clientInfo.Name
@@ -75,6 +61,23 @@ func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolH
 			attribute.String("mcp.tool.name", req.Params.Name),
 			attribute.String("mcp.client.name", clientName),
 		))
+
+		if g.policyClient != nil {
+			policyReq := g.configuration.policyRequest(serverName, tool.Name, policy.ActionInvoke)
+			decision, err := g.policyClient.Evaluate(ctx, policyReq)
+			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
+			submitAuditEvent(g.policyClient, event)
+			if err != nil {
+				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
+				span.SetStatus(codes.Error, "Policy evaluation failed")
+				return nil, fmt.Errorf("policy check failed for %s/%s: %w", serverName, tool.Name, err)
+			}
+			if !decision.Allowed {
+				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
+				span.SetStatus(codes.Error, "Policy denied tool call")
+				return nil, fmt.Errorf("policy denied tool %s on server %s: %s", tool.Name, serverName, decision.Reason)
+			}
+		}
 
 		// Convert CallToolParamsRaw to CallToolParams
 		var args any

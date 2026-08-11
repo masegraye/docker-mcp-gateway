@@ -61,6 +61,7 @@ func TestTokenStoreDoesNotReadAmbiguousLegacyKey(t *testing.T) {
 	_, err = store.Retrieve(attacker)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "token not found")
+	assert.True(t, IsTokenNotFound(err))
 }
 
 func TestTokenStoreMigratesUnambiguousLegacyKey(t *testing.T) {

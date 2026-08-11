@@ -113,7 +113,7 @@ func (t *TokenStore) Retrieve(dcrClient dcr.Client) (*oauth2.Token, error) {
 	encoded, err := getTokenCredential(t.credentialHelper, dcrClient, true)
 	if err != nil {
 		if credentials.IsErrCredentialsNotFound(err) {
-			return nil, fmt.Errorf("token not found for %s", dcrClient.ServerName)
+			return nil, fmt.Errorf("token not found for %s: %w", dcrClient.ServerName, err)
 		}
 		return nil, fmt.Errorf("retrieving token for %s: %w", dcrClient.ServerName, err)
 	}
@@ -131,6 +131,12 @@ func (t *TokenStore) Retrieve(dcrClient dcr.Client) (*oauth2.Token, error) {
 	}
 
 	return &token, nil
+}
+
+// IsTokenNotFound reports whether an OAuth token operation failed because the
+// local credential is already absent.
+func IsTokenNotFound(err error) bool {
+	return credentials.IsErrCredentialsNotFound(err)
 }
 
 // Delete removes an OAuth token from the credential helper

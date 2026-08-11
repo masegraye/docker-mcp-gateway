@@ -295,7 +295,12 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 			tools: config.ToolsConfig{ServerTools: map[string][]string{}},
 		},
 	}
-	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "dangerous-tool"})
+	tool := catalog.Tool{Name: "dangerous-tool"}
+	handler := gateway.withPOCIToolTelemetry(
+		"poci-server",
+		tool,
+		gateway.withInvokePolicy("poci-server", tool.Name, gateway.pociToolHandler(tool)),
+	)
 
 	_, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{Name: "dangerous-tool"},
@@ -312,7 +317,12 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 func TestPOCIInvalidArgumentsRecordDuration(t *testing.T) {
 	spanRecorder, metricReader := setupTestTelemetry(t)
 	gateway := &Gateway{}
-	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "malformed-tool"})
+	tool := catalog.Tool{Name: "malformed-tool"}
+	handler := gateway.withPOCIToolTelemetry(
+		"poci-server",
+		tool,
+		gateway.withInvokePolicy("poci-server", tool.Name, gateway.pociToolHandler(tool)),
+	)
 
 	_, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{

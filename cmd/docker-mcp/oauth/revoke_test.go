@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/docker/docker-credential-helpers/credentials"
 	seclient "github.com/docker/secrets-engine/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,6 +163,25 @@ func TestRevokeCEMode_FailsHardWhenProviderRevocationFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "provider unavailable")
 	assert.False(t, deleteCalled, "DCR client must be preserved when provider revocation fails")
+}
+
+func TestRevokeCEMode_MissingTokenStillDeletesDCRClient(t *testing.T) {
+	oldNewManager := newCERevokeManagerFunc
+	t.Cleanup(func() { newCERevokeManagerFunc = oldNewManager })
+
+	deletedDCRClient := ""
+	newCERevokeManagerFunc = func() ceRevokeManager {
+		return &stubCERevokeManager{
+			revokeErr: fmt.Errorf("token not found: %w", credentials.NewErrCredentialsNotFound()),
+			deleteDCRClientFn: func(app string) error {
+				deletedDCRClient = app
+				return nil
+			},
+		}
+	}
+
+	require.NoError(t, revokeCEMode(t.Context(), "ce-server"))
+	assert.Equal(t, "ce-server", deletedDCRClient)
 }
 
 // TestRevokeCommunityMode_CleansDesktopEntries verifies that the real

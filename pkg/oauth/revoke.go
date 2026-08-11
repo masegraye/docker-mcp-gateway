@@ -56,9 +56,6 @@ func RevokeTokenAtProvider(ctx context.Context, client dcr.Client, token *oauth2
 	}
 
 	httpClient := guardedOAuthHTTPClient(ctx, 30*time.Second)
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
 
 	for _, item := range requests {
 		form := url.Values{

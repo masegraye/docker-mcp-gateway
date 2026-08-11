@@ -177,7 +177,11 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 						capabilities.Tools = append(capabilities.Tools, ToolRegistration{
 							ServerName: serverConfig.Name,
 							Tool:       &prefixedTool,
-							Handler:    g.mcpServerToolHandler(serverConfig.Name, g.mcpServer, tool.Annotations, tool.Name),
+							Handler: g.withInvokePolicy(
+								serverConfig.Name,
+								tool.Name,
+								g.mcpServerToolHandler(serverConfig.Name, g.mcpServer, tool.Annotations, tool.Name),
+							),
 						})
 					}
 				}
@@ -285,7 +289,11 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 				capabilities.Tools = append(capabilities.Tools, ToolRegistration{
 					ServerName: serverName,
 					Tool:       &mcpTool,
-					Handler:    g.mcpToolHandler(serverName, tool),
+					Handler: g.withPOCIToolTelemetry(
+						serverName,
+						tool,
+						g.withInvokePolicy(serverName, tool.Name, g.pociToolHandler(tool)),
+					),
 				})
 			}
 

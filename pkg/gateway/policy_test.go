@@ -219,7 +219,11 @@ func TestMcpServerToolHandler_PolicyEnforcement(t *testing.T) {
 		}
 
 		// Get handler
-		handler := g.mcpServerToolHandler("test-server", nil, nil, "test-tool")
+		handler := g.withInvokePolicy(
+			"test-server",
+			"test-tool",
+			g.mcpServerToolHandler("test-server", nil, nil, "test-tool"),
+		)
 
 		// Execute
 		req := &mcp.CallToolRequest{
@@ -251,7 +255,11 @@ func TestMcpServerToolHandler_PolicyEnforcement(t *testing.T) {
 			policyClient: mock,
 		}
 
-		handler := g.mcpServerToolHandler("test-server", nil, nil, "test-tool")
+		handler := g.withInvokePolicy(
+			"test-server",
+			"test-tool",
+			g.mcpServerToolHandler("test-server", nil, nil, "test-tool"),
+		)
 
 		req := &mcp.CallToolRequest{
 			Params: &mcp.CallToolParamsRaw{
@@ -281,7 +289,7 @@ func TestPOCIToolHandler_PolicyEnforcement(t *testing.T) {
 			},
 		},
 	}
-	handler := g.mcpToolHandler("poci-server", catalog.Tool{Name: "dangerous-tool"})
+	handler := g.withInvokePolicy("poci-server", "dangerous-tool", g.pociToolHandler(catalog.Tool{Name: "dangerous-tool"}))
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "dangerous-tool"}}
 
 	result, err := handler(t.Context(), req)
@@ -325,7 +333,7 @@ func TestMcpExec_PolicyEnforcement(t *testing.T) {
 		g.toolRegistrations["dangerous-tool"] = ToolRegistration{
 			ServerName: "backend-server",
 			Tool:       &mcp.Tool{Name: "dangerous-tool"},
-			Handler:    mockToolHandler,
+			Handler:    g.withInvokePolicy("backend-server", "dangerous-tool", mockToolHandler),
 		}
 
 		// Get mcp-exec handler
@@ -395,7 +403,7 @@ func TestMcpExec_PolicyEnforcement(t *testing.T) {
 		g.toolRegistrations["test-tool"] = ToolRegistration{
 			ServerName: "backend-server",
 			Tool:       &mcp.Tool{Name: "test-tool"},
-			Handler:    mockToolHandler,
+			Handler:    g.withInvokePolicy("backend-server", "test-tool", mockToolHandler),
 		}
 
 		mcpExecHandler := addMcpExecHandler(g)

@@ -41,7 +41,24 @@ func inferServerTransportType(serverConfig *catalog.ServerConfig) string {
 	return "unknown"
 }
 
-func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolHandler {
+func (g *Gateway) pociToolHandler(tool catalog.Tool) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args any
+		if len(req.Params.Arguments) > 0 {
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
+			}
+		}
+		params := &mcp.CallToolParams{
+			Meta:      req.Params.Meta,
+			Name:      req.Params.Name,
+			Arguments: args,
+		}
+		return g.clientPool.runToolContainer(ctx, tool, params), nil
+	}
+}
+
+func (g *Gateway) withPOCIToolTelemetry(serverName string, tool catalog.Tool, next mcp.ToolHandler) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		clientName := ""
 		if clientInfo := auditClientInfoFromSession(req.Session); clientInfo != nil {
@@ -66,38 +83,12 @@ func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolH
 		}()
 		telemetry.ToolCallCounter.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
 
-		if g.policyClient != nil {
-			policyReq := g.configuration.policyRequest(serverName, tool.Name, policy.ActionInvoke)
-			decision, err := g.policyClient.Evaluate(ctx, policyReq)
-			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
-			submitAuditEvent(g.policyClient, event)
-			if err != nil {
-				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
-				span.SetStatus(codes.Error, "Policy evaluation failed")
-				return nil, fmt.Errorf("policy check failed for %s/%s: %w", serverName, tool.Name, err)
-			}
-			if !decision.Allowed {
-				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
-				span.SetStatus(codes.Error, "Policy denied tool call")
-				return nil, fmt.Errorf("policy denied tool %s on server %s: %s", tool.Name, serverName, decision.Reason)
-			}
+		result, err := next(ctx, req)
+		if err != nil {
+			telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
+			span.SetStatus(codes.Error, "Tool call failed")
+			return nil, err
 		}
-
-		// Convert CallToolParamsRaw to CallToolParams
-		var args any
-		if len(req.Params.Arguments) > 0 {
-			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
-				span.SetStatus(codes.Error, "Failed to unmarshal arguments")
-				return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
-			}
-		}
-		params := &mcp.CallToolParams{
-			Meta:      req.Params.Meta,
-			Name:      req.Params.Name,
-			Arguments: args,
-		}
-		result := g.clientPool.runToolContainer(ctx, tool, params)
 		if result != nil && result.IsError {
 			telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
 			span.SetStatus(codes.Error, "Tool execution failed")
@@ -114,24 +105,6 @@ func (g *Gateway) mcpServerToolHandler(serverName string, server *mcp.Server, _ 
 		serverConfig, _, ok := g.configuration.Find(serverName)
 		if !ok {
 			return nil, fmt.Errorf("server %q not found in configuration", serverName)
-		}
-
-		if g.policyClient != nil {
-			policyReq := g.configuration.policyRequest(
-				serverConfig.Name,
-				originalToolName,
-				policy.ActionInvoke,
-			)
-			decision, err := g.policyClient.Evaluate(ctx, policyReq)
-			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
-			submitAuditEvent(g.policyClient, event)
-			if err != nil {
-				telemetry.RecordToolError(ctx, nil, serverConfig.Name, inferServerTransportType(serverConfig), req.Params.Name)
-				return nil, fmt.Errorf("policy check failed for %s/%s: %w", serverConfig.Name, originalToolName, err)
-			}
-			if !decision.Allowed {
-				return nil, fmt.Errorf("policy denied tool %s on server %s: %s", originalToolName, serverConfig.Name, decision.Reason)
-			}
 		}
 
 		// Debug logging to stderr

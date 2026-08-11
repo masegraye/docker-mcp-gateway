@@ -314,6 +314,40 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 	assertToolDurationMetric(t, metricReader, "poci-server", "dangerous-tool")
 }
 
+func TestMCPServerPolicyEvaluationFailureRecordsErrorMetric(t *testing.T) {
+	_, metricReader := setupTestTelemetry(t)
+	policyClient := newMockPolicyClient()
+	policyClient.failWith("remote-server", "dangerous-tool", policy.ActionInvoke, assert.AnError)
+	serverConfig := &catalog.ServerConfig{
+		Name: "remote-server",
+		Spec: catalog.Server{Remote: catalog.Remote{
+			Transport: "sse",
+		}},
+	}
+	gateway := &Gateway{
+		policyClient: policyClient,
+		configuration: Configuration{
+			serverNames: []string{serverConfig.Name},
+			servers:     map[string]catalog.Server{serverConfig.Name: serverConfig.Spec},
+		},
+	}
+	nextCalled := false
+	handler := withMCPServerPolicyErrorTelemetry(
+		serverConfig,
+		gateway.withInvokePolicy(serverConfig.Name, "dangerous-tool", func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			nextCalled = true
+			return &mcp.CallToolResult{}, nil
+		}),
+	)
+
+	_, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "remote-server-dangerous-tool"},
+	})
+	require.ErrorIs(t, err, assert.AnError)
+	assert.False(t, nextCalled)
+	assertToolErrorMetric(t, metricReader, "remote-server", "sse", "remote-server-dangerous-tool")
+}
+
 func TestPOCIInvalidArgumentsRecordDuration(t *testing.T) {
 	spanRecorder, metricReader := setupTestTelemetry(t)
 	gateway := &Gateway{}
@@ -435,4 +469,27 @@ func assertToolDurationMetric(t *testing.T, metricReader *sdkmetric.ManualReader
 		}
 	}
 	t.Fatal("Tool duration histogram not found")
+}
+
+func assertToolErrorMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, serverType, toolName string) {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(t.Context(), &rm))
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.tool.errors" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			assert.Equal(t, int64(1), sum.DataPoints[0].Value)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.name", serverName)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.type", serverType)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.tool.name", toolName)
+			return
+		}
+	}
+	t.Fatal("Tool error counter not found")
 }

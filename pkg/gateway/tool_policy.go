@@ -2,11 +2,14 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/docker/mcp-gateway/pkg/catalog"
 	"github.com/docker/mcp-gateway/pkg/policy"
+	"github.com/docker/mcp-gateway/pkg/telemetry"
 )
 
 type invokePolicyError struct {
@@ -47,5 +50,20 @@ func (g *Gateway) withInvokePolicy(serverName, toolName string, next mcp.ToolHan
 		}
 
 		return next(ctx, req)
+	}
+}
+
+// withMCPServerPolicyErrorTelemetry preserves the error signal for policy
+// evaluator failures that occur before the MCP server handler starts its tool
+// telemetry. The server handler remains responsible for execution failures,
+// while POCI registrations use their existing outer telemetry middleware.
+func withMCPServerPolicyErrorTelemetry(serverConfig *catalog.ServerConfig, next mcp.ToolHandler) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		result, err := next(ctx, req)
+		var policyErr *invokePolicyError
+		if errors.As(err, &policyErr) && policyErr.cause != nil {
+			telemetry.RecordToolError(ctx, nil, serverConfig.Name, inferServerTransportType(serverConfig), req.Params.Name)
+		}
+		return result, err
 	}
 }

@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -143,6 +145,53 @@ func TestHeaderRoundTripper_EmptyHeaders(t *testing.T) {
 	require.NotNil(t, capturedReq)
 	assert.Empty(t, capturedReq.Header.Get("Authorization"),
 		"no Authorization header when headers map is empty")
+}
+
+func TestHeaderRoundTripper_RejectsCrossOriginRequest(t *testing.T) {
+	origin, err := url.Parse("https://mcp.example.com/service")
+	require.NoError(t, err)
+
+	baseCalled := false
+	rt := &headerRoundTripper{
+		base: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			baseCalled = true
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+		}),
+		headers: map[string]string{"Authorization": "Bearer secret"},
+		origin:  origin,
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://attacker.example/steal", nil)
+	require.NoError(t, err)
+
+	_, err = rt.RoundTrip(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different origin")
+	assert.False(t, baseCalled, "cross-origin request must be rejected before credentials can be attached")
+}
+
+func TestSameOriginRedirectPolicy(t *testing.T) {
+	origin, err := url.Parse("https://mcp.example.com/service")
+	require.NoError(t, err)
+	policy := sameOriginRedirectPolicy(origin)
+
+	t.Run("allows same origin and default port", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://mcp.example.com:443/redirected", nil)
+		require.NoError(t, err)
+		require.NoError(t, policy(req, nil))
+	})
+
+	for _, target := range []string{
+		"https://attacker.example/steal",
+		"http://mcp.example.com/steal",
+		"https://mcp.example.com:8443/steal",
+	} {
+		t.Run(fmt.Sprintf("rejects_%s", target), func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+			require.NoError(t, err)
+			require.Error(t, policy(req, nil))
+		})
+	}
 }
 
 func TestRemoteMCPClientRejectsUnsafeRemoteURL(t *testing.T) {

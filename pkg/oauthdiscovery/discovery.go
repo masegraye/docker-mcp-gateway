@@ -18,7 +18,22 @@ import (
 	"github.com/docker/mcp-gateway/pkg/remoteurl"
 )
 
-func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthhelpers.Discovery, error) {
+// Discovery contains the standard OAuth discovery result plus metadata used
+// for secure token lifecycle operations that is not represented by the
+// oauth-helpers v0.0.3 Discovery type.
+type Discovery struct {
+	oauthhelpers.Discovery
+	RevocationEndpoint                     string
+	RevocationEndpointAuthMethodsSupported []string
+}
+
+type authorizationServerMetadata struct {
+	oauthhelpers.AuthorizationServerMetadata
+	RevocationEndpoint                     string   `json:"revocation_endpoint,omitempty"`
+	RevocationEndpointAuthMethodsSupported []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
+}
+
+func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*Discovery, error) {
 	if err := remoteurl.Validate(ctx, serverURL); err != nil {
 		return nil, err
 	}
@@ -82,25 +97,29 @@ func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthhel
 		return nil, fmt.Errorf("fetching authorization server metadata from %s: %w", authServerURL, err)
 	}
 
-	discovery := &oauthhelpers.Discovery{
-		RequiresOAuth: true,
+	discovery := &Discovery{
+		Discovery: oauthhelpers.Discovery{
+			RequiresOAuth: true,
 
-		ResourceURL:         defaultAuthServerURL,
-		ResourceServer:      defaultAuthServerURL,
-		AuthorizationServer: authServerURL,
+			ResourceURL:         defaultAuthServerURL,
+			ResourceServer:      defaultAuthServerURL,
+			AuthorizationServer: authServerURL,
 
-		Issuer:                            authServerMetadata.Issuer,
-		AuthorizationEndpoint:             authServerMetadata.AuthorizationEndpoint,
-		TokenEndpoint:                     authServerMetadata.TokenEndpoint,
-		RegistrationEndpoint:              authServerMetadata.RegistrationEndpoint,
-		JWKSUri:                           authServerMetadata.JWKSUri,
-		ScopesSupported:                   authServerMetadata.ScopesSupported,
-		ResponseTypesSupported:            authServerMetadata.ResponseTypesSupported,
-		ResponseModesSupported:            authServerMetadata.ResponseModesSupported,
-		GrantTypesSupported:               authServerMetadata.GrantTypesSupported,
-		TokenEndpointAuthMethodsSupported: authServerMetadata.TokenEndpointAuthMethodsSupported,
-		SupportsPKCE:                      slices.Contains(authServerMetadata.CodeChallengeMethodsSupported, "S256"),
-		CodeChallengeMethod:               authServerMetadata.CodeChallengeMethodsSupported,
+			Issuer:                            authServerMetadata.Issuer,
+			AuthorizationEndpoint:             authServerMetadata.AuthorizationEndpoint,
+			TokenEndpoint:                     authServerMetadata.TokenEndpoint,
+			RegistrationEndpoint:              authServerMetadata.RegistrationEndpoint,
+			JWKSUri:                           authServerMetadata.JWKSUri,
+			ScopesSupported:                   authServerMetadata.ScopesSupported,
+			ResponseTypesSupported:            authServerMetadata.ResponseTypesSupported,
+			ResponseModesSupported:            authServerMetadata.ResponseModesSupported,
+			GrantTypesSupported:               authServerMetadata.GrantTypesSupported,
+			TokenEndpointAuthMethodsSupported: authServerMetadata.TokenEndpointAuthMethodsSupported,
+			SupportsPKCE:                      slices.Contains(authServerMetadata.CodeChallengeMethodsSupported, "S256"),
+			CodeChallengeMethod:               authServerMetadata.CodeChallengeMethodsSupported,
+		},
+		RevocationEndpoint:                     authServerMetadata.RevocationEndpoint,
+		RevocationEndpointAuthMethodsSupported: authServerMetadata.RevocationEndpointAuthMethodsSupported,
 	}
 
 	if resourceMetadata != nil {
@@ -122,7 +141,7 @@ func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthhel
 	return discovery, nil
 }
 
-func ValidateDiscovery(ctx context.Context, discovery *oauthhelpers.Discovery) error {
+func ValidateDiscovery(ctx context.Context, discovery *Discovery) error {
 	if discovery == nil {
 		return fmt.Errorf("OAuth discovery result is empty")
 	}
@@ -137,6 +156,7 @@ func ValidateDiscovery(ctx context.Context, discovery *oauthhelpers.Discovery) e
 		{name: "authorization endpoint", rawURL: discovery.AuthorizationEndpoint},
 		{name: "token endpoint", rawURL: discovery.TokenEndpoint},
 		{name: "registration endpoint", rawURL: discovery.RegistrationEndpoint},
+		{name: "revocation endpoint", rawURL: discovery.RevocationEndpoint},
 	} {
 		if endpoint.rawURL == "" {
 			continue
@@ -149,7 +169,7 @@ func ValidateDiscovery(ctx context.Context, discovery *oauthhelpers.Discovery) e
 	return nil
 }
 
-func PerformDCR(ctx context.Context, discovery *oauthhelpers.Discovery, serverName string, redirectURI string) (*oauthhelpers.ClientCredentials, error) {
+func PerformDCR(ctx context.Context, discovery *Discovery, serverName string, redirectURI string) (*oauthhelpers.ClientCredentials, error) {
 	if discovery == nil || discovery.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("no registration endpoint found for %s", serverName)
 	}
@@ -275,7 +295,7 @@ func fetchOAuthProtectedResourceMetadata(ctx context.Context, client *http.Clien
 	return &metadata, nil
 }
 
-func fetchAuthorizationServerMetadata(ctx context.Context, client *http.Client, authServerURL string) (*oauthhelpers.AuthorizationServerMetadata, error) {
+func fetchAuthorizationServerMetadata(ctx context.Context, client *http.Client, authServerURL string) (*authorizationServerMetadata, error) {
 	metadataURL, err := buildRFC8414WellKnownURL(ctx, authServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("building well-known URL: %w", err)
@@ -302,12 +322,15 @@ func fetchAuthorizationServerMetadata(ctx context.Context, client *http.Client, 
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var metadata oauthhelpers.AuthorizationServerMetadata
+	var metadata authorizationServerMetadata
 	if err := json.Unmarshal(body, &metadata); err != nil {
 		return nil, fmt.Errorf("parsing JSON response: %w", err)
 	}
 	if metadata.Issuer == "" {
 		return nil, fmt.Errorf("issuer field missing in authorization server metadata")
+	}
+	if err := validateAuthorizationServerIssuer(authServerURL, metadata.Issuer); err != nil {
+		return nil, err
 	}
 	if metadata.AuthorizationEndpoint == "" {
 		return nil, fmt.Errorf("authorization_endpoint field missing in authorization server metadata")
@@ -320,6 +343,13 @@ func fetchAuthorizationServerMetadata(ctx context.Context, client *http.Client, 
 	}
 
 	return &metadata, nil
+}
+
+func validateAuthorizationServerIssuer(expected, actual string) error {
+	if actual != expected {
+		return fmt.Errorf("authorization server metadata issuer %q does not match requested issuer %q", actual, expected)
+	}
+	return nil
 }
 
 func buildRFC8414WellKnownURL(ctx context.Context, issuerURL string) (string, error) {

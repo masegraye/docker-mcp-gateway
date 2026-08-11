@@ -20,6 +20,12 @@ When enabled, the gateway adds five internal management tools to the available t
 
 **Note**: Dynamic tools are automatically disabled when using the `--servers` flag to explicitly specify which servers to run. This is because explicit server configuration indicates a manual mode where automatic server management tools are not needed.
 
+### Security boundary
+
+The registry is the gateway's current active set, not an authorization allowlist. When dynamic tools are enabled, `mcp-add` is intentionally allowed to activate another server from the configured catalog. Every activation is evaluated with the policy client's `load` action before the server is added.
+
+Deployments that require a fixed server allowlist should pass the allowed names with `--servers`, which disables dynamic tools. Deployments that keep dynamic tools enabled should use policy rules to restrict which catalog servers may be loaded.
+
 ## Available Tools
 
 ### 1. mcp-find

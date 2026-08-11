@@ -10,6 +10,7 @@ import (
 
 	oauthhelpers "github.com/docker/mcp-gateway-oauth-helpers"
 	"github.com/docker/mcp-gateway/pkg/desktop"
+	"github.com/docker/mcp-gateway/pkg/oauthdiscovery"
 )
 
 // mockDCRClient implements dcrRegistrationClient for testing.
@@ -40,11 +41,11 @@ func (m *mockDCRClient) RegisterDCRClientPending(_ context.Context, app string, 
 
 // mockProber implements oauthProber for testing.
 type mockProber struct {
-	discovery *oauthhelpers.Discovery
+	discovery *oauthdiscovery.Discovery
 	err       error
 }
 
-func (m *mockProber) DiscoverOAuthRequirements(_ context.Context, _ string) (*oauthhelpers.Discovery, error) {
+func (m *mockProber) DiscoverOAuthRequirements(_ context.Context, _ string) (*oauthdiscovery.Discovery, error) {
 	return m.discovery, m.err
 }
 
@@ -62,7 +63,7 @@ func TestRegisterProviderForDynamicDiscovery_SkipsAlreadyRegistered(t *testing.T
 func TestRegisterProviderForDynamicDiscovery_RegistersWhenOAuthRequired(t *testing.T) {
 	client := newMockDCRClient()
 	prober := &mockProber{
-		discovery: &oauthhelpers.Discovery{RequiresOAuth: true},
+		discovery: &oauthdiscovery.Discovery{Discovery: oauthhelpers.Discovery{RequiresOAuth: true}},
 	}
 
 	err := registerProviderForDynamicDiscovery(t.Context(), "ai-kubit-mcp-server", "https://mcp.kubit.ai/mcp", client, prober)
@@ -76,7 +77,7 @@ func TestRegisterProviderForDynamicDiscovery_RegistersWhenOAuthRequired(t *testi
 func TestRegisterProviderForDynamicDiscovery_SkipsWhenNoOAuthRequired(t *testing.T) {
 	client := newMockDCRClient()
 	prober := &mockProber{
-		discovery: &oauthhelpers.Discovery{RequiresOAuth: false},
+		discovery: &oauthdiscovery.Discovery{Discovery: oauthhelpers.Discovery{RequiresOAuth: false}},
 	}
 
 	err := registerProviderForDynamicDiscovery(t.Context(), "my-server", "https://example.com/mcp", client, prober)

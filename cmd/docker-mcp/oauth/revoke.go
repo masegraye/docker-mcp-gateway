@@ -23,6 +23,9 @@ var (
 	// requiring docker pass, Docker Desktop, or a real database.
 	deleteOAuthTokenFunc      = secret.DeleteOAuthToken
 	deleteDCRClientFunc       = secret.DeleteDCRClient
+	getCommunityDCRClientFunc = pkgoauth.GetDCRClientFromDockerPass
+	getCommunityTokenFunc     = pkgoauth.GetTokenFromDockerPass
+	revokeProviderTokenFunc   = pkgoauth.RevokeTokenAtProvider
 	desktopDeleteOAuthAppFunc = func(ctx context.Context, app string) error {
 		return desktop.NewAuthClient().DeleteOAuthApp(ctx, app)
 	}
@@ -84,10 +87,10 @@ func revokeCEMode(ctx context.Context, app string) error {
 	credHelper := pkgoauth.NewReadWriteCredentialHelper()
 	manager := pkgoauth.NewManager(credHelper)
 
-	// Delete OAuth token
+	// Revoke at the provider before deleting local credentials. If remote
+	// revocation fails, preserve both the token and DCR metadata for retry.
 	if err := manager.RevokeToken(ctx, app); err != nil {
-		// Token might not exist, continue to DCR deletion
-		fmt.Printf("Note: %v\n", err)
+		return fmt.Errorf("failed to revoke OAuth access: %w", err)
 	}
 
 	// Delete DCR client (matches Desktop behavior)
@@ -109,10 +112,21 @@ func revokeCommunityMode(ctx context.Context, app string) error {
 		return fmt.Errorf("invalid server name %q: %w", app, err)
 	}
 
-	// Delete OAuth token from docker pass
+	dcrClient, err := getCommunityDCRClientFunc(ctx, app)
+	if err != nil {
+		return fmt.Errorf("failed to load DCR client for provider revocation: %w", err)
+	}
+	token, err := getCommunityTokenFunc(ctx, app)
+	if err != nil {
+		return fmt.Errorf("failed to load OAuth token for provider revocation: %w", err)
+	}
+	if err := revokeProviderTokenFunc(ctx, dcrClient, token); err != nil {
+		return fmt.Errorf("failed to revoke OAuth access: %w", err)
+	}
+
+	// Delete OAuth token from docker pass only after provider revocation.
 	if err := deleteOAuthTokenFunc(ctx, appID); err != nil {
-		// Token might not exist, continue to DCR deletion
-		fmt.Printf("Note: %v\n", err)
+		return fmt.Errorf("provider token revoked but failed to delete local OAuth token: %w", err)
 	}
 
 	// Delete DCR client from docker pass (soft failure -- entry may not exist

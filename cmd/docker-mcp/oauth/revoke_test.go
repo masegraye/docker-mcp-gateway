@@ -8,8 +8,10 @@ import (
 	seclient "github.com/docker/secrets-engine/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 
 	pkgoauth "github.com/docker/mcp-gateway/pkg/oauth"
+	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 )
 
 // mockRevokeRouting overrides the function pointers so Revoke() does not
@@ -134,15 +136,28 @@ func TestRevokeCommunityMode_CleansDesktopEntries(t *testing.T) {
 	oldDesktopCleanup := cleanStaleDesktopEntriesFunc
 	oldDeleteToken := deleteOAuthTokenFunc
 	oldDeleteDCR := deleteDCRClientFunc
+	oldGetDCR := getCommunityDCRClientFunc
+	oldGetToken := getCommunityTokenFunc
+	oldRevokeProvider := revokeProviderTokenFunc
 	t.Cleanup(func() {
 		cleanStaleDesktopEntriesFunc = oldDesktopCleanup
 		deleteOAuthTokenFunc = oldDeleteToken
 		deleteDCRClientFunc = oldDeleteDCR
+		getCommunityDCRClientFunc = oldGetDCR
+		getCommunityTokenFunc = oldGetToken
+		revokeProviderTokenFunc = oldRevokeProvider
 	})
 
 	// Mock the docker pass operations so the real handler doesn't shell out.
 	deleteOAuthTokenFunc = func(_ context.Context, _ seclient.ID) error { return nil }
 	deleteDCRClientFunc = func(_ context.Context, _ seclient.ID) error { return nil }
+	getCommunityDCRClientFunc = func(_ context.Context, app string) (dcr.Client, error) {
+		return dcr.Client{ServerName: app, RevocationEndpoint: "https://auth.example/revoke"}, nil
+	}
+	getCommunityTokenFunc = func(_ context.Context, _ string) (*oauth2.Token, error) {
+		return &oauth2.Token{AccessToken: "access"}, nil
+	}
+	revokeProviderTokenFunc = func(_ context.Context, _ dcr.Client, _ *oauth2.Token) error { return nil }
 
 	var desktopCleanupCalled string
 	cleanStaleDesktopEntriesFunc = func(_ context.Context, app string) {
@@ -154,6 +169,51 @@ func TestRevokeCommunityMode_CleansDesktopEntries(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-community-server", desktopCleanupCalled,
 		"community revoke should clean stale Desktop entries")
+}
+
+func TestRevokeCommunityMode_PreservesLocalCredentialsWhenProviderRevokeFails(t *testing.T) {
+	oldDesktopCleanup := cleanStaleDesktopEntriesFunc
+	oldDeleteToken := deleteOAuthTokenFunc
+	oldDeleteDCR := deleteDCRClientFunc
+	oldGetDCR := getCommunityDCRClientFunc
+	oldGetToken := getCommunityTokenFunc
+	oldRevokeProvider := revokeProviderTokenFunc
+	t.Cleanup(func() {
+		cleanStaleDesktopEntriesFunc = oldDesktopCleanup
+		deleteOAuthTokenFunc = oldDeleteToken
+		deleteDCRClientFunc = oldDeleteDCR
+		getCommunityDCRClientFunc = oldGetDCR
+		getCommunityTokenFunc = oldGetToken
+		revokeProviderTokenFunc = oldRevokeProvider
+	})
+
+	getCommunityDCRClientFunc = func(_ context.Context, app string) (dcr.Client, error) {
+		return dcr.Client{ServerName: app, RevocationEndpoint: "https://auth.example/revoke"}, nil
+	}
+	getCommunityTokenFunc = func(_ context.Context, _ string) (*oauth2.Token, error) {
+		return &oauth2.Token{AccessToken: "access"}, nil
+	}
+	revokeProviderTokenFunc = func(_ context.Context, _ dcr.Client, _ *oauth2.Token) error {
+		return fmt.Errorf("provider unavailable")
+	}
+
+	localDeleteCalled := false
+	deleteOAuthTokenFunc = func(_ context.Context, _ seclient.ID) error {
+		localDeleteCalled = true
+		return nil
+	}
+	deleteDCRClientFunc = func(_ context.Context, _ seclient.ID) error {
+		localDeleteCalled = true
+		return nil
+	}
+	cleanStaleDesktopEntriesFunc = func(_ context.Context, _ string) {
+		localDeleteCalled = true
+	}
+
+	err := revokeCommunityMode(t.Context(), "my-community-server")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider unavailable")
+	assert.False(t, localDeleteCalled, "local credentials must remain available for a safe retry")
 }
 
 // TestRevokeDesktopMode_CleansDockerPassEntries verifies that the real

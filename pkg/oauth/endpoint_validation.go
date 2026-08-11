@@ -28,6 +28,7 @@ func validateOutboundDCRClientEndpoints(ctx context.Context, client dcr.Client) 
 		rawURL string
 	}{
 		{name: "token endpoint", rawURL: client.TokenEndpoint},
+		{name: "revocation endpoint", rawURL: client.RevocationEndpoint},
 		{name: "resource URL", rawURL: client.ResourceURL},
 	} {
 		if endpoint.rawURL == "" {

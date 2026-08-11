@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -53,6 +54,10 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *mcp.InitializeParam
 	}
 	if err := remoteurl.Validate(ctx, url); err != nil {
 		return fmt.Errorf("unsafe remote MCP URL for %s: %w", c.config.Name, err)
+	}
+	remoteOrigin, err := urlpkg.Parse(url)
+	if err != nil {
+		return fmt.Errorf("invalid remote MCP URL for %s: %w", c.config.Name, err)
 	}
 
 	// Secrets to env
@@ -114,7 +119,6 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *mcp.InitializeParam
 	}
 
 	var mcpTransport mcp.Transport
-	var err error
 
 	baseTransport := remoteurl.GuardDirectTransport()
 	if proxyDialer := desktop.DockerDesktopProxySocketDialer(ctx); proxyDialer != nil {
@@ -126,7 +130,9 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *mcp.InitializeParam
 		Transport: &headerRoundTripper{
 			base:    baseTransport,
 			headers: headers,
+			origin:  remoteOrigin,
 		},
+		CheckRedirect: sameOriginRedirectPolicy(remoteOrigin),
 	}
 
 	switch strings.ToLower(transport) {
@@ -220,9 +226,14 @@ func maskSecret(value string) string {
 type headerRoundTripper struct {
 	base    http.RoundTripper
 	headers map[string]string
+	origin  *urlpkg.URL
 }
 
 func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if h.origin != nil && !sameOrigin(h.origin, req.URL) {
+		return nil, fmt.Errorf("refusing to forward remote MCP request from %s to different origin %s", h.origin.Redacted(), req.URL.Redacted())
+	}
+
 	// Clone the request to avoid modifying the original
 	newReq := req.Clone(req.Context())
 	// Add custom headers
@@ -234,4 +245,34 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 		newReq.Header.Set(key, value)
 	}
 	return h.base.RoundTrip(newReq)
+}
+
+func sameOriginRedirectPolicy(origin *urlpkg.URL) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, _ []*http.Request) error {
+		if !sameOrigin(origin, req.URL) {
+			return fmt.Errorf("refusing cross-origin remote MCP redirect from %s to %s", origin.Redacted(), req.URL.Redacted())
+		}
+		return nil
+	}
+}
+
+func sameOrigin(a, b *urlpkg.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(canonicalHost(a), canonicalHost(b))
+}
+
+func canonicalHost(u *urlpkg.URL) string {
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	return host + ":" + port
 }

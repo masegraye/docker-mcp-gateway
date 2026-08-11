@@ -89,17 +89,20 @@ func DiscoverAndRegister(ctx context.Context, serverName string, scopes string, 
 	log.Logf("- Registration successful for: %s, clientID: %s", serverName, creds.ClientID)
 
 	return Client{
-		ServerName:            serverName,
-		ProviderName:          serverName, // For DCR, provider name = server name
-		ClientID:              creds.ClientID,
-		ClientName:            fmt.Sprintf("MCP Gateway - %s", serverName),
-		AuthorizationEndpoint: creds.AuthorizationEndpoint,
-		TokenEndpoint:         creds.TokenEndpoint,
-		ResourceURL:           creds.ServerURL,
-		RedirectURI:           redirectURI,
-		ScopesSupported:       discovery.ScopesSupported,
-		RequiredScopes:        discovery.Scopes,
-		RegisteredAt:          time.Now(),
+		ServerName:                             serverName,
+		ProviderName:                           serverName, // For DCR, provider name = server name
+		ClientID:                               creds.ClientID,
+		ClientName:                             fmt.Sprintf("MCP Gateway - %s", serverName),
+		AuthorizationEndpoint:                  creds.AuthorizationEndpoint,
+		AuthorizationServer:                    discovery.AuthorizationServer,
+		TokenEndpoint:                          creds.TokenEndpoint,
+		RevocationEndpoint:                     discovery.RevocationEndpoint,
+		RevocationEndpointAuthMethodsSupported: discovery.RevocationEndpointAuthMethodsSupported,
+		ResourceURL:                            creds.ServerURL,
+		RedirectURI:                            redirectURI,
+		ScopesSupported:                        discovery.ScopesSupported,
+		RequiredScopes:                         discovery.Scopes,
+		RegisteredAt:                           time.Now(),
 	}, nil
 }
 

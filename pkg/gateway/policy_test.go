@@ -265,6 +265,32 @@ func TestMcpServerToolHandler_PolicyEnforcement(t *testing.T) {
 	})
 }
 
+func TestPOCIToolHandler_PolicyEnforcement(t *testing.T) {
+	mock := newMockPolicyClient()
+	mock.deny("poci-server", "dangerous-tool", policy.ActionInvoke, "tool blocked by admin")
+
+	g := &Gateway{
+		policyClient: mock,
+		configuration: Configuration{
+			serverNames: []string{"poci-server"},
+			servers: map[string]catalog.Server{
+				"poci-server": {
+					Type:  "poci",
+					Tools: []catalog.Tool{{Name: "dangerous-tool"}},
+				},
+			},
+		},
+	}
+	handler := g.mcpToolHandler("poci-server", catalog.Tool{Name: "dangerous-tool"})
+	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "dangerous-tool"}}
+
+	result, err := handler(t.Context(), req)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "policy denied")
+	assert.Contains(t, err.Error(), "tool blocked by admin")
+}
+
 // =============================================================================
 // R3: McpExec Tests
 // =============================================================================

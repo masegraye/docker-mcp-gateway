@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	oauthhelpers "github.com/docker/mcp-gateway-oauth-helpers"
-
 	"github.com/docker/mcp-gateway/pkg/db"
 	"github.com/docker/mcp-gateway/pkg/desktop"
 	"github.com/docker/mcp-gateway/pkg/log"
@@ -21,13 +19,13 @@ type dcrRegistrationClient interface {
 
 // oauthProber abstracts OAuth discovery to enable testing.
 type oauthProber interface {
-	DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthhelpers.Discovery, error)
+	DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthdiscovery.Discovery, error)
 }
 
 // defaultOAuthProber wraps the package-level function.
 type defaultOAuthProber struct{}
 
-func (defaultOAuthProber) DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthhelpers.Discovery, error) {
+func (defaultOAuthProber) DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*oauthdiscovery.Discovery, error) {
 	return oauthdiscovery.DiscoverOAuthRequirements(ctx, serverURL)
 }
 

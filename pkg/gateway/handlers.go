@@ -41,12 +41,47 @@ func inferServerTransportType(serverConfig *catalog.ServerConfig) string {
 	return "unknown"
 }
 
-func (g *Gateway) mcpToolHandler(tool catalog.Tool) mcp.ToolHandler {
+func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if g.policyClient != nil {
+			policyReq := g.configuration.policyRequest(serverName, tool.Name, policy.ActionInvoke)
+			decision, err := g.policyClient.Evaluate(ctx, policyReq)
+			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
+			submitAuditEvent(g.policyClient, event)
+			if err != nil {
+				telemetry.RecordToolError(ctx, nil, serverName, "docker", req.Params.Name)
+				return nil, fmt.Errorf("policy check failed for %s/%s: %w", serverName, tool.Name, err)
+			}
+			if !decision.Allowed {
+				return nil, fmt.Errorf("policy denied tool %s on server %s: %s", tool.Name, serverName, decision.Reason)
+			}
+		}
+
+		clientName := ""
+		if clientInfo := auditClientInfoFromSession(req.Session); clientInfo != nil {
+			clientName = clientInfo.Name
+		}
+		startTime := time.Now()
+		spanAttrs := []attribute.KeyValue{
+			attribute.String("mcp.server.name", serverName),
+			attribute.String("mcp.server.type", "docker"),
+			attribute.String("mcp.server.image", tool.Container.Image),
+		}
+		ctx, span := telemetry.StartToolCallSpan(ctx, req.Params.Name, spanAttrs...)
+		defer span.End()
+		telemetry.ToolCallCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("mcp.server.name", serverName),
+			attribute.String("mcp.server.type", "docker"),
+			attribute.String("mcp.tool.name", req.Params.Name),
+			attribute.String("mcp.client.name", clientName),
+		))
+
 		// Convert CallToolParamsRaw to CallToolParams
 		var args any
 		if len(req.Params.Arguments) > 0 {
 			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
+				span.SetStatus(codes.Error, "Failed to unmarshal arguments")
 				return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
 			}
 		}
@@ -55,7 +90,20 @@ func (g *Gateway) mcpToolHandler(tool catalog.Tool) mcp.ToolHandler {
 			Name:      req.Params.Name,
 			Arguments: args,
 		}
-		return g.clientPool.runToolContainer(ctx, tool, params)
+		result := g.clientPool.runToolContainer(ctx, tool, params)
+		telemetry.ToolCallDuration.Record(ctx, float64(time.Since(startTime).Milliseconds()), metric.WithAttributes(
+			attribute.String("mcp.server.name", serverName),
+			attribute.String("mcp.server.type", "docker"),
+			attribute.String("mcp.tool.name", req.Params.Name),
+			attribute.String("mcp.client.name", clientName),
+		))
+		if result != nil && result.IsError {
+			telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
+			span.SetStatus(codes.Error, "Tool execution failed")
+			return result, nil
+		}
+		span.SetStatus(codes.Ok, "")
+		return result, nil
 	}
 }
 

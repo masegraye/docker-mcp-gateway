@@ -54,13 +54,17 @@ func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolH
 			attribute.String("mcp.server.image", tool.Container.Image),
 		}
 		ctx, span := telemetry.StartToolCallSpan(ctx, req.Params.Name, spanAttrs...)
-		defer span.End()
-		telemetry.ToolCallCounter.Add(ctx, 1, metric.WithAttributes(
+		metricAttrs := []attribute.KeyValue{
 			attribute.String("mcp.server.name", serverName),
 			attribute.String("mcp.server.type", "docker"),
 			attribute.String("mcp.tool.name", req.Params.Name),
 			attribute.String("mcp.client.name", clientName),
-		))
+		}
+		defer func() {
+			telemetry.ToolCallDuration.Record(ctx, float64(time.Since(startTime).Milliseconds()), metric.WithAttributes(metricAttrs...))
+			span.End()
+		}()
+		telemetry.ToolCallCounter.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
 
 		if g.policyClient != nil {
 			policyReq := g.configuration.policyRequest(serverName, tool.Name, policy.ActionInvoke)
@@ -94,12 +98,6 @@ func (g *Gateway) mcpToolHandler(serverName string, tool catalog.Tool) mcp.ToolH
 			Arguments: args,
 		}
 		result := g.clientPool.runToolContainer(ctx, tool, params)
-		telemetry.ToolCallDuration.Record(ctx, float64(time.Since(startTime).Milliseconds()), metric.WithAttributes(
-			attribute.String("mcp.server.name", serverName),
-			attribute.String("mcp.server.type", "docker"),
-			attribute.String("mcp.tool.name", req.Params.Name),
-			attribute.String("mcp.client.name", clientName),
-		))
 		if result != nil && result.IsError {
 			telemetry.RecordToolError(ctx, span, serverName, "docker", req.Params.Name)
 			span.SetStatus(codes.Error, "Tool execution failed")

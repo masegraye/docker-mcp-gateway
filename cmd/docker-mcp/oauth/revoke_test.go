@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
+	"github.com/docker/mcp-gateway/cmd/docker-mcp/secret-management/secret"
 	pkgoauth "github.com/docker/mcp-gateway/pkg/oauth"
 	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 )
@@ -290,6 +291,57 @@ func TestRevokeCommunityMode_PreservesLocalCredentialsWhenProviderRevokeFails(t 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "provider unavailable")
 	assert.False(t, localDeleteCalled, "local credentials must remain available for a safe retry")
+}
+
+func TestRevokeCommunityMode_MissingDCRClientIsIdempotent(t *testing.T) {
+	oldDesktopCleanup := cleanStaleDesktopEntriesFunc
+	oldDeleteToken := deleteOAuthTokenFunc
+	oldDeleteDCR := deleteDCRClientFunc
+	oldGetDCR := getCommunityDCRClientFunc
+	oldGetToken := getCommunityTokenFunc
+	oldRevokeProvider := revokeProviderTokenFunc
+	t.Cleanup(func() {
+		cleanStaleDesktopEntriesFunc = oldDesktopCleanup
+		deleteOAuthTokenFunc = oldDeleteToken
+		deleteDCRClientFunc = oldDeleteDCR
+		getCommunityDCRClientFunc = oldGetDCR
+		getCommunityTokenFunc = oldGetToken
+		revokeProviderTokenFunc = oldRevokeProvider
+	})
+
+	getCommunityDCRClientFunc = func(_ context.Context, app string) (dcr.Client, error) {
+		return dcr.Client{}, fmt.Errorf("DCR client not found for %s: %w", app, secret.ErrSecretNotFound)
+	}
+	providerCallMade := false
+	getCommunityTokenFunc = func(_ context.Context, _ string) (*oauth2.Token, error) {
+		providerCallMade = true
+		return &oauth2.Token{}, nil
+	}
+	revokeProviderTokenFunc = func(_ context.Context, _ dcr.Client, _ *oauth2.Token) error {
+		providerCallMade = true
+		return nil
+	}
+
+	localTokenDeleteCalled := false
+	deleteOAuthTokenFunc = func(_ context.Context, _ seclient.ID) error {
+		localTokenDeleteCalled = true
+		return errors.New("local token not found")
+	}
+	localDCRDeleteCalled := false
+	deleteDCRClientFunc = func(_ context.Context, _ seclient.ID) error {
+		localDCRDeleteCalled = true
+		return errors.New("local DCR client not found")
+	}
+	desktopCleanupCalled := false
+	cleanStaleDesktopEntriesFunc = func(_ context.Context, _ string) {
+		desktopCleanupCalled = true
+	}
+
+	require.NoError(t, revokeCommunityMode(t.Context(), "never-authorized-server"))
+	assert.False(t, providerCallMade)
+	assert.True(t, localTokenDeleteCalled)
+	assert.True(t, localDCRDeleteCalled)
+	assert.True(t, desktopCleanupCalled)
 }
 
 // TestRevokeDesktopMode_CleansDockerPassEntries verifies that the real

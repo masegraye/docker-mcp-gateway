@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -281,7 +282,7 @@ func TestTelemetryErrorRecording(t *testing.T) {
 }
 
 func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
-	spanRecorder, _ := setupTestTelemetry(t)
+	spanRecorder, metricReader := setupTestTelemetry(t)
 	policyClient := newMockPolicyClient()
 	policyClient.deny("poci-server", "dangerous-tool", policy.ActionInvoke, "blocked")
 	gateway := &Gateway{
@@ -305,6 +306,27 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "mcp.tool.call", spans[0].Name())
 	assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
+	assertToolDurationMetric(t, metricReader, "poci-server", "dangerous-tool")
+}
+
+func TestPOCIInvalidArgumentsRecordDuration(t *testing.T) {
+	spanRecorder, metricReader := setupTestTelemetry(t)
+	gateway := &Gateway{}
+	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "malformed-tool"})
+
+	_, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "malformed-tool",
+			Arguments: json.RawMessage("{"),
+		},
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to unmarshal arguments")
+
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
+	assertToolDurationMetric(t, metricReader, "poci-server", "malformed-tool")
 }
 
 // TestHandlerInstrumentationIntegration is a placeholder for full integration test
@@ -380,4 +402,27 @@ func assertMetricAttribute(t *testing.T, set attribute.Set, key string, expected
 	value, found := set.Value(attribute.Key(key))
 	assert.True(t, found, "Attribute %s not found", key)
 	assert.Equal(t, expectedValue, value.AsString())
+}
+
+func assertToolDurationMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, toolName string) {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(t.Context(), &rm))
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.tool.duration" {
+				continue
+			}
+			histogram, ok := m.Data.(metricdata.Histogram[float64])
+			require.True(t, ok)
+			require.Len(t, histogram.DataPoints, 1)
+			assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
+			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.server.name", serverName)
+			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.server.type", "docker")
+			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.tool.name", toolName)
+			return
+		}
+	}
+	t.Fatal("Tool duration histogram not found")
 }

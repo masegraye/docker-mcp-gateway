@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	seclient "github.com/docker/secrets-engine/client"
@@ -121,6 +122,18 @@ func revokeCommunityMode(ctx context.Context, app string) error {
 
 	dcrClient, err := getCommunityDCRClientFunc(ctx, app)
 	if err != nil {
+		if errors.Is(err, secret.ErrSecretNotFound) {
+			fmt.Printf("Note: %v\n", err)
+			if err := deleteOAuthTokenFunc(ctx, appID); err != nil {
+				fmt.Printf("Note: %v\n", err)
+			}
+			if err := deleteDCRClientFunc(ctx, appID); err != nil {
+				fmt.Printf("Note: %v\n", err)
+			}
+			cleanStaleDesktopEntriesFunc(ctx, app)
+			fmt.Printf("OAuth access revoked for %s\n", app)
+			return nil
+		}
 		return fmt.Errorf("failed to load DCR client for provider revocation: %w", err)
 	}
 	providerRevoked := false

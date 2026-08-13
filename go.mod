@@ -11,7 +11,7 @@ require (
 	github.com/docker/cli-docs-tool v0.10.0
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/docker/docker-credential-helpers v0.9.3
-	github.com/docker/mcp-gateway-oauth-helpers v0.0.6
+	github.com/docker/mcp-gateway-oauth-helpers v0.0.7
 	github.com/docker/secrets-engine/client v0.0.30
 	github.com/docker/secrets-engine/x v0.2.2-do.not.use
 	github.com/dop251/goja v0.0.0-20251008123653-cf18d89f3cf6

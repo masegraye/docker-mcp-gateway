@@ -160,7 +160,7 @@ github.com/docker/go-connections/tlsconfig
 # github.com/docker/go-units v0.5.0
 ## explicit
 github.com/docker/go-units
-# github.com/docker/mcp-gateway-oauth-helpers v0.0.6
+# github.com/docker/mcp-gateway-oauth-helpers v0.0.7
 ## explicit; go 1.23.0
 github.com/docker/mcp-gateway-oauth-helpers
 # github.com/docker/secrets-engine/client v0.0.30

@@ -170,6 +170,46 @@ func TestAuthorizeCommunityMode_NoCleanupOnFailure(t *testing.T) {
 		"community authorize should NOT clean Desktop entries when flow fails before token storage")
 }
 
+func TestAuthorizationBrowserCommandWindowsDoesNotUseShell(t *testing.T) {
+	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "")
+	rawURL := "https://example.invalid/authorize?x=1&calc.exe&y="
+
+	_, err := authorizationBrowserCommand(t.Context(), rawURL)
+	require.NoError(t, err)
+	cmd := windowsAuthorizationBrowserCommand(t.Context(), rawURL)
+	assert.Equal(t, []string{"rundll32.exe", "url.dll,FileProtocolHandler", rawURL}, cmd.Args)
+	assert.NotEqual(t, "cmd", cmd.Path)
+	assert.NotEqual(t, "cmd.exe", cmd.Path)
+}
+
+func TestAuthorizationBrowserCommandRejectsUnsafeURLs(t *testing.T) {
+	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "")
+
+	for _, rawURL := range []string{
+		"example.invalid/authorize",
+		"http://example.invalid/authorize",
+		"file:///tmp/authorize",
+		"https://user:password@example.invalid/authorize",
+		"https://127.0.0.1/authorize",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			_, err := authorizationBrowserCommand(t.Context(), rawURL)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid OAuth authorization URL")
+		})
+	}
+}
+
+func TestAuthorizationBrowserCommandAllowsLocalHTTPWithExplicitOptIn(t *testing.T) {
+	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "1")
+	rawURL := "http://127.0.0.1:8080/authorize?client_id=local"
+
+	_, err := authorizationBrowserCommand(t.Context(), rawURL)
+	require.NoError(t, err)
+	cmd := windowsAuthorizationBrowserCommand(t.Context(), rawURL)
+	assert.Equal(t, []string{"rundll32.exe", "url.dll,FileProtocolHandler", rawURL}, cmd.Args)
+}
+
 func TestExchangeCommunityAuthorizationCodeDoesNotFollowRedirects(t *testing.T) {
 	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "1")
 

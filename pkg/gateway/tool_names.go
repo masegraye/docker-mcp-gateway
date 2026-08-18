@@ -77,25 +77,50 @@ func validateToolNameCollisions(registrations []ToolRegistration, existing map[s
 		}
 
 		if rejectReserved {
-			if _, reserved := reservedGatewayToolNames[toolName]; reserved {
-				return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s exposes reserved gateway tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolName)}
+			if reservedName, _, reserved := findEqualFoldMapEntry(reservedGatewayToolNames, toolName); reserved {
+				if reservedName == toolName {
+					return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s exposes reserved gateway tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolName)}
+				}
+				return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s exposes tool name %q, which differs only by case from reserved gateway tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolName, reservedName)}
 			}
 		}
 
-		if previous, ok := seen[toolName]; ok {
-			return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s and %s both expose tool name %q; enable tool-name-prefix or set unique catalog prefixes", toolOwner(previous), toolOwner(registration), toolName)}
+		if previousName, previous, ok := findEqualFoldMapEntry(seen, toolName); ok {
+			if previousName == toolName {
+				return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s and %s both expose tool name %q; enable tool-name-prefix or set unique catalog prefixes", toolOwner(previous), toolOwner(registration), toolName)}
+			}
+			return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s exposes tool name %q and %s exposes case-variant tool name %q; enable tool-name-prefix or set unique catalog prefixes", toolOwner(previous), previousName, toolOwner(registration), toolName)}
 		}
 		seen[toolName] = registration
 
 		if existing == nil {
 			continue
 		}
-		if previous, ok := existing[toolName]; ok {
-			return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s would shadow %s for tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolOwner(previous), toolName)}
+		if previousName, previous, ok := findEqualFoldMapEntry(existing, toolName); ok {
+			if previousName == toolName {
+				return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s would shadow %s for tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolOwner(previous), toolName)}
+			}
+			return toolNameCollisionError{message: fmt.Sprintf("tool name collision: %s exposes tool name %q, which differs only by case from %s tool name %q; enable tool-name-prefix or set a unique catalog prefix", toolOwner(registration), toolName, toolOwner(previous), previousName)}
 		}
 	}
 
 	return nil
+}
+
+func findEqualFoldMapEntry[V any](entries map[string]V, candidate string) (string, V, bool) {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.EqualFold(key, candidate) {
+			return key, entries[key], true
+		}
+	}
+
+	var zero V
+	return "", zero, false
 }
 
 func sortedToolRegistrations(registrations []ToolRegistration) []ToolRegistration {
@@ -295,19 +320,31 @@ func (g *Gateway) catalogToolNameWarnings(serverName string, server catalog.Serv
 		}
 
 		exposedName := prefixToolName(prefix, toolName)
-		if previousRawName, ok := seen[exposedName]; ok {
-			warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which duplicates tool %q in this server", toolName, exposedName, previousRawName))
+		if previousExposedName, previousRawName, ok := findEqualFoldMapEntry(seen, exposedName); ok {
+			if previousExposedName == exposedName {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which duplicates tool %q in this server", toolName, exposedName, previousRawName))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which differs only by case from tool %q exposed as %q in this server", toolName, exposedName, previousRawName, previousExposedName))
+			}
 			continue
 		}
 		seen[exposedName] = toolName
 
-		if _, reserved := reservedGatewayToolNames[exposedName]; reserved {
-			warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which is reserved for a gateway internal tool", toolName, exposedName))
+		if reservedName, _, reserved := findEqualFoldMapEntry(reservedGatewayToolNames, exposedName); reserved {
+			if reservedName == exposedName {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which is reserved for a gateway internal tool", toolName, exposedName))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which differs only by case from reserved gateway internal tool %q", toolName, exposedName, reservedName))
+			}
 			continue
 		}
 
-		if previous, ok := existing[exposedName]; ok && previous.ServerName != serverName {
-			warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which conflicts with %s", toolName, exposedName, toolOwner(previous)))
+		if previousName, previous, ok := findEqualFoldMapEntry(existing, exposedName); ok && previous.ServerName != serverName {
+			if previousName == exposedName {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which conflicts with %s", toolName, exposedName, toolOwner(previous)))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("tool %q would be exposed as %q, which differs only by case from %s tool name %q", toolName, exposedName, toolOwner(previous), previousName))
+			}
 		}
 	}
 

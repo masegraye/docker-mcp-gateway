@@ -12,7 +12,7 @@ import (
 	"github.com/docker/mcp-gateway/pkg/remoteurl"
 )
 
-func TestGuardedOAuthHTTPClientDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
+func TestCredentialHTTPClientDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
 	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "1")
 
 	redirectTargetCalled := false
@@ -32,7 +32,7 @@ func TestGuardedOAuthHTTPClientDoesNotForwardCredentialsAcrossRedirects(t *testi
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Basic client-secret")
 
-	resp, err := guardedOAuthHTTPClient(ctx, 0).Do(req)
+	resp, err := NewCredentialHTTPClient(ctx, 0).Do(req)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 

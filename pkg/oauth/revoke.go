@@ -55,7 +55,7 @@ func RevokeTokenAtProvider(ctx context.Context, client dcr.Client, token *oauth2
 		return fmt.Errorf("OAuth token for %s contains no access or refresh token", client.ServerName)
 	}
 
-	httpClient := guardedOAuthHTTPClient(ctx, 30*time.Second)
+	httpClient := NewCredentialHTTPClient(ctx, 30*time.Second)
 
 	for _, item := range requests {
 		form := url.Values{

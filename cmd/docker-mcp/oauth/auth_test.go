@@ -3,12 +3,19 @@ package oauth
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 
+	"github.com/docker/mcp-gateway/pkg/desktop"
 	pkgoauth "github.com/docker/mcp-gateway/pkg/oauth"
+	"github.com/docker/mcp-gateway/pkg/remoteurl"
 )
 
 // mockAuthorizeRouting overrides the function pointers so Authorize() does not
@@ -161,4 +168,59 @@ func TestAuthorizeCommunityMode_NoCleanupOnFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to create callback server")
 	assert.False(t, desktopCleanupCalled,
 		"community authorize should NOT clean Desktop entries when flow fails before token storage")
+}
+
+func TestExchangeCommunityAuthorizationCodeDoesNotFollowRedirects(t *testing.T) {
+	t.Setenv(remoteurl.AllowInsecureRemoteURLEnv, "1")
+
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			redirectTargetCalled := make(chan struct{}, 1)
+			redirectTarget := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				redirectTargetCalled <- struct{}{}
+			}))
+			t.Cleanup(redirectTarget.Close)
+
+			requestBody := make(chan struct {
+				body string
+				err  error
+			}, 1)
+			tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				requestBody <- struct {
+					body string
+					err  error
+				}{body: string(body), err: err}
+				w.Header().Set("Location", redirectTarget.URL)
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(tokenEndpoint.Close)
+
+			config := &oauth2.Config{
+				ClientID:    "client-id",
+				RedirectURL: "http://127.0.0.1/callback",
+				Endpoint: oauth2.Endpoint{
+					TokenURL:  tokenEndpoint.URL,
+					AuthStyle: oauth2.AuthStyleInParams,
+				},
+			}
+
+			ctx := desktop.WithNoDockerDesktop(t.Context())
+			_, err := exchangeCommunityAuthorizationCode(ctx, config, "authorization-code", oauth2.VerifierOption("pkce-verifier"))
+			require.Error(t, err)
+
+			capturedRequest := <-requestBody
+			require.NoError(t, capturedRequest.err)
+			form, err := url.ParseQuery(capturedRequest.body)
+			require.NoError(t, err)
+			assert.Equal(t, "authorization-code", form.Get("code"))
+			assert.Equal(t, "pkce-verifier", form.Get("code_verifier"))
+
+			select {
+			case <-redirectTargetCalled:
+				t.Fatal("community token exchange replayed credentials to the redirect target")
+			default:
+			}
+		})
+	}
 }

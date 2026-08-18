@@ -11,7 +11,10 @@ import (
 	"github.com/docker/mcp-gateway/pkg/remoteurl"
 )
 
-func guardedOAuthHTTPClient(ctx context.Context, timeout time.Duration) *http.Client {
+// NewCredentialHTTPClient returns an outbound OAuth client for requests that
+// carry credentials in headers or the request body. It preserves the standard
+// direct or Docker Desktop proxy transport guards, but never follows redirects.
+func NewCredentialHTTPClient(ctx context.Context, timeout time.Duration) *http.Client {
 	var client *http.Client
 	if proxyDialer := desktop.DockerDesktopProxySocketDialer(ctx); proxyDialer != nil {
 		client = remoteurl.NewTrustedProxyHTTPClient(timeout, proxyDialer)

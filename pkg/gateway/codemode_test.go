@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -10,8 +11,108 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/mcp-gateway/pkg/catalog"
+	"github.com/docker/mcp-gateway/pkg/codemode"
 	"github.com/docker/mcp-gateway/pkg/policy"
 )
+
+func TestCodeModeUsesRegisteredServerTools(t *testing.T) {
+	session := &mcp.ServerSession{}
+	extra := &mcp.RequestExtra{}
+	var called []string
+
+	registration := func(serverName, toolName string) ToolRegistration {
+		return ToolRegistration{
+			ServerName: serverName,
+			Tool: &mcp.Tool{
+				Name:        toolName,
+				Description: "registered " + toolName,
+				InputSchema: map[string]any{"type": "object"},
+			},
+			Handler: func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				require.Same(t, session, req.Session)
+				require.Same(t, extra, req.Extra)
+				called = append(called, req.Params.Name)
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: req.Params.Name}},
+				}, nil
+			},
+		}
+	}
+
+	g := &Gateway{
+		toolRegistrations: map[string]ToolRegistration{
+			"ReadFile":  registration("backend-server", "ReadFile"),
+			"OtherTool": registration("other-server", "OtherTool"),
+		},
+	}
+	adapter := &serverToolSetAdapter{
+		gateway:    g,
+		serverName: "backend-server",
+		session:    session,
+		extra:      extra,
+	}
+
+	registeredTools, err := adapter.Tools(context.Background())
+	require.NoError(t, err)
+	require.Len(t, registeredTools, 1)
+	assert.Equal(t, "ReadFile", registeredTools[0].Tool.Name)
+
+	generatedTools, err := codemode.Wrap([]codemode.ToolSet{adapter}).Tools(context.Background())
+	require.NoError(t, err)
+	require.Len(t, generatedTools, 1)
+	assert.Contains(t, generatedTools[0].Tool.Description, "ReadFile")
+	assert.NotContains(t, generatedTools[0].Tool.Description, "readfile")
+	assert.NotContains(t, generatedTools[0].Tool.Description, "OtherTool")
+
+	arguments, err := json.Marshal(codemode.RunToolsWithJavascriptArgs{Script: "return ReadFile({});"})
+	require.NoError(t, err)
+	result, err := generatedTools[0].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: arguments},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	assert.Equal(t, "ReadFile", result.Content[0].(*mcp.TextContent).Text)
+	assert.Equal(t, []string{"ReadFile"}, called)
+
+	caseVariantArguments, err := json.Marshal(codemode.RunToolsWithJavascriptArgs{Script: "return readfile({});"})
+	require.NoError(t, err)
+	result, err = generatedTools[0].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: caseVariantArguments},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "readfile")
+	assert.Equal(t, []string{"ReadFile"}, called, "case-variant tool must not reach a backend handler")
+}
+
+func TestCodeModeRejectsServersOutsideEnabledSet(t *testing.T) {
+	g := &Gateway{
+		configuration: Configuration{
+			serverNames: []string{"enabled-server"},
+			servers: map[string]catalog.Server{
+				"enabled-server": {Image: "enabled-image"},
+				"catalog-only":   {Image: "catalog-image"},
+			},
+		},
+	}
+
+	for _, serverName := range []string{"catalog-only", "Enabled-Server"} {
+		t.Run(serverName, func(t *testing.T) {
+			arguments, err := json.Marshal(map[string]any{
+				"servers": []string{serverName},
+				"name":    "test",
+			})
+			require.NoError(t, err)
+
+			result, err := addCodemodeHandler(g)(context.Background(), &mcp.CallToolRequest{
+				Params: &mcp.CallToolParamsRaw{Arguments: arguments},
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Content, 1)
+			assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "is not enabled")
+		})
+	}
+}
 
 func TestInvokePolicyMiddleware(t *testing.T) {
 	newHandler := func(mock policy.Client, called *bool) mcp.ToolHandler {

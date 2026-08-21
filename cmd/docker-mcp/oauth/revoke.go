@@ -95,10 +95,14 @@ func revokeDesktopMode(ctx context.Context, app string) error {
 func revokeCEMode(ctx context.Context, app string) error {
 	manager := newCERevokeManagerFunc()
 
-	// Revoke at the provider before deleting local credentials. If remote
-	// revocation fails, preserve both the token and DCR metadata for retry.
+	// Revoke at the provider before deleting local credentials. Provider and
+	// transport failures preserve the DCR metadata for retry. An already-missing
+	// local token is idempotent and must not prevent DCR cleanup.
 	if err := manager.RevokeToken(ctx, app); err != nil {
-		return fmt.Errorf("failed to revoke OAuth access: %w", err)
+		if !pkgoauth.IsTokenNotFound(err) {
+			return fmt.Errorf("failed to revoke OAuth access: %w", err)
+		}
+		fmt.Printf("Note: OAuth token for %s is already absent; deleting DCR client\n", app)
 	}
 
 	// Delete DCR client (matches Desktop behavior)

@@ -56,20 +56,39 @@ func Authorize(ctx context.Context, app string, scopes string, openBrowser bool)
 	}
 }
 
-// openBrowserURL opens the given URL in the system's default browser.
-func openBrowserURL(rawURL string) {
-	ctx := context.Background()
-	var cmd *exec.Cmd
+// openBrowserURL opens a validated authorization URL in the system's default
+// browser. Starting the platform handler remains best-effort, but an unsafe URL
+// is rejected before any process is launched.
+func openBrowserURL(rawURL string) error {
+	cmd, err := authorizationBrowserCommand(context.Background(), rawURL)
+	if err != nil {
+		return err
+	}
+	_ = cmd.Start()
+	return nil
+}
+
+func authorizationBrowserCommand(ctx context.Context, rawURL string) (*exec.Cmd, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid OAuth authorization URL: %w", err)
+	}
+	if err := remoteurl.DefaultValidator().ValidateURLWithoutResolution(parsedURL); err != nil {
+		return nil, fmt.Errorf("invalid OAuth authorization URL: %w", err)
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.CommandContext(ctx, "open", rawURL)
+		return exec.CommandContext(ctx, "open", rawURL), nil
 	case "windows":
-		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", rawURL)
+		return windowsAuthorizationBrowserCommand(ctx, rawURL), nil
 	default: // linux and others
-		cmd = exec.CommandContext(ctx, "xdg-open", rawURL)
+		return exec.CommandContext(ctx, "xdg-open", rawURL), nil
 	}
-	// Best-effort: ignore errors so a missing browser doesn't fail the auth flow.
-	_ = cmd.Start()
+}
+
+func windowsAuthorizationBrowserCommand(ctx context.Context, rawURL string) *exec.Cmd {
+	return exec.CommandContext(ctx, "rundll32.exe", "url.dll,FileProtocolHandler", rawURL)
 }
 
 // lookupIsCommunity checks the OCI catalog database to determine if a server is a community server.
@@ -159,7 +178,9 @@ func authorizeCEMode(ctx context.Context, serverName string, scopes string, open
 	// Step 4: Display authorization URL
 	if openBrowser {
 		fmt.Printf("Opening your browser for authentication. If it doesn't open automatically, please visit: %s\n", authURL)
-		openBrowserURL(authURL)
+		if err := openBrowserURL(authURL); err != nil {
+			return err
+		}
 	} else {
 		fmt.Printf("Please visit this URL to authorize:\n\n  %s\n\n", authURL)
 	}
@@ -283,7 +304,9 @@ func authorizeCommunityMode(ctx context.Context, serverName string, scopes strin
 	// Step 4: Display authorization URL (and open browser if requested)
 	if openBrowser {
 		fmt.Printf("Opening your browser for authentication. If it doesn't open automatically, please visit: %s\n", authURL)
-		openBrowserURL(authURL)
+		if err := openBrowserURL(authURL); err != nil {
+			return err
+		}
 	} else {
 		fmt.Printf("Please visit this URL to authorize:\n\n  %s\n\n", authURL)
 	}
@@ -325,8 +348,7 @@ func authorizeCommunityMode(ctx context.Context, serverName string, scopes strin
 		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("resource", provider.ResourceURL()))
 	}
 
-	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, remoteurl.NewHTTPClient(0, nil))
-	token, err := config.Exchange(exchangeCtx, code, exchangeOpts...)
+	token, err := exchangeCommunityAuthorizationCode(ctx, config, code, exchangeOpts...)
 	if err != nil {
 		return fmt.Errorf("token exchange failed: %w", err)
 	}
@@ -346,4 +368,9 @@ func authorizeCommunityMode(ctx context.Context, serverName string, scopes strin
 	fmt.Printf("You can now use: docker mcp server start %s\n", serverName)
 
 	return nil
+}
+
+func exchangeCommunityAuthorizationCode(ctx context.Context, config *oauth2.Config, code string, opts ...oauth2.AuthCodeOption) (*oauth2.Token, error) {
+	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, pkgoauth.NewCredentialHTTPClient(ctx, 0))
+	return config.Exchange(exchangeCtx, code, opts...)
 }

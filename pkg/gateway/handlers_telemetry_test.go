@@ -295,7 +295,12 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 			tools: config.ToolsConfig{ServerTools: map[string][]string{}},
 		},
 	}
-	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "dangerous-tool"})
+	tool := catalog.Tool{Name: "dangerous-tool"}
+	handler := gateway.withPOCIToolTelemetry(
+		"poci-server",
+		tool,
+		gateway.withInvokePolicy("poci-server", tool.Name, gateway.pociToolHandler(tool)),
+	)
 
 	_, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{Name: "dangerous-tool"},
@@ -306,13 +311,80 @@ func TestPOCIPolicyDenialCreatesErrorSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "mcp.tool.call", spans[0].Name())
 	assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
-	assertToolDurationMetric(t, metricReader, "poci-server", "dangerous-tool")
+	assertToolDurationMetric(t, metricReader, "poci-server", "docker", "dangerous-tool")
+}
+
+func TestMCPServerPolicyFailuresRecordCompleteTelemetry(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		evaluationError bool
+	}{
+		{name: "denial"},
+		{name: "evaluation_error", evaluationError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spanRecorder, metricReader := setupTestTelemetry(t)
+			policyClient := newMockPolicyClient()
+			if tc.evaluationError {
+				policyClient.failWith("remote-server", "dangerous-tool", policy.ActionInvoke, assert.AnError)
+			} else {
+				policyClient.deny("remote-server", "dangerous-tool", policy.ActionInvoke, "blocked")
+			}
+			serverConfig := &catalog.ServerConfig{
+				Name: "remote-server",
+				Spec: catalog.Server{Remote: catalog.Remote{
+					Transport: "sse",
+				}},
+			}
+			gateway := &Gateway{
+				policyClient: policyClient,
+				configuration: Configuration{
+					serverNames: []string{serverConfig.Name},
+					servers:     map[string]catalog.Server{serverConfig.Name: serverConfig.Spec},
+				},
+			}
+			nextCalled := false
+			handler := withMCPServerToolTelemetry(
+				serverConfig,
+				gateway.withInvokePolicy(serverConfig.Name, "dangerous-tool", func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					nextCalled = true
+					return &mcp.CallToolResult{}, nil
+				}),
+			)
+
+			_, err := handler(t.Context(), &mcp.CallToolRequest{
+				Params: &mcp.CallToolParamsRaw{Name: "remote-server-dangerous-tool"},
+			})
+			if tc.evaluationError {
+				require.ErrorIs(t, err, assert.AnError)
+			} else {
+				require.ErrorContains(t, err, "policy denied")
+			}
+			assert.False(t, nextCalled)
+
+			spans := spanRecorder.Ended()
+			require.Len(t, spans, 1)
+			assert.Equal(t, "mcp.tool.call", spans[0].Name())
+			assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
+			assertAttribute(t, spans[0].Attributes(), "mcp.server.name", "remote-server")
+			assertAttribute(t, spans[0].Attributes(), "mcp.server.type", "sse")
+			assertAttribute(t, spans[0].Attributes(), "mcp.tool.name", "remote-server-dangerous-tool")
+			assertToolCallMetric(t, metricReader, "remote-server", "sse", "remote-server-dangerous-tool")
+			assertToolDurationMetric(t, metricReader, "remote-server", "sse", "remote-server-dangerous-tool")
+			assertToolErrorMetric(t, metricReader, "remote-server", "sse", "remote-server-dangerous-tool")
+		})
+	}
 }
 
 func TestPOCIInvalidArgumentsRecordDuration(t *testing.T) {
 	spanRecorder, metricReader := setupTestTelemetry(t)
 	gateway := &Gateway{}
-	handler := gateway.mcpToolHandler("poci-server", catalog.Tool{Name: "malformed-tool"})
+	tool := catalog.Tool{Name: "malformed-tool"}
+	handler := gateway.withPOCIToolTelemetry(
+		"poci-server",
+		tool,
+		gateway.withInvokePolicy("poci-server", tool.Name, gateway.pociToolHandler(tool)),
+	)
 
 	_, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -326,7 +398,7 @@ func TestPOCIInvalidArgumentsRecordDuration(t *testing.T) {
 	spans := spanRecorder.Ended()
 	require.Len(t, spans, 1)
 	assert.Equal(t, otelcodes.Error, spans[0].Status().Code)
-	assertToolDurationMetric(t, metricReader, "poci-server", "malformed-tool")
+	assertToolDurationMetric(t, metricReader, "poci-server", "docker", "malformed-tool")
 }
 
 // TestHandlerInstrumentationIntegration is a placeholder for full integration test
@@ -404,7 +476,30 @@ func assertMetricAttribute(t *testing.T, set attribute.Set, key string, expected
 	assert.Equal(t, expectedValue, value.AsString())
 }
 
-func assertToolDurationMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, toolName string) {
+func assertToolCallMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, serverType, toolName string) {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(t.Context(), &rm))
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.tool.calls" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			assert.Equal(t, int64(1), sum.DataPoints[0].Value)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.name", serverName)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.type", serverType)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.tool.name", toolName)
+			return
+		}
+	}
+	t.Fatal("Tool call counter not found")
+}
+
+func assertToolDurationMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, serverType, toolName string) {
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
@@ -419,10 +514,33 @@ func assertToolDurationMetric(t *testing.T, metricReader *sdkmetric.ManualReader
 			require.Len(t, histogram.DataPoints, 1)
 			assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
 			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.server.name", serverName)
-			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.server.type", "docker")
+			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.server.type", serverType)
 			assertMetricAttribute(t, histogram.DataPoints[0].Attributes, "mcp.tool.name", toolName)
 			return
 		}
 	}
 	t.Fatal("Tool duration histogram not found")
+}
+
+func assertToolErrorMetric(t *testing.T, metricReader *sdkmetric.ManualReader, serverName, serverType, toolName string) {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(t.Context(), &rm))
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.tool.errors" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			assert.Equal(t, int64(1), sum.DataPoints[0].Value)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.name", serverName)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.server.type", serverType)
+			assertMetricAttribute(t, sum.DataPoints[0].Attributes, "mcp.tool.name", toolName)
+			return
+		}
+	}
+	t.Fatal("Tool error counter not found")
 }

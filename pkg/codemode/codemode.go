@@ -84,7 +84,7 @@ func (c *tool) Tools(ctx context.Context) ([]*ToolWithHandler, error) {
 				return nil, fmt.Errorf("parsing arguments: %w", err)
 			}
 
-			output, err := c.runJavascript(ctx, args.Script)
+			output, err := c.runJavascript(ctx, args.Script, request)
 			if err != nil {
 				return nil, err
 			}

@@ -4,85 +4,45 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/docker/mcp-gateway/pkg/catalog"
 	"github.com/docker/mcp-gateway/pkg/codemode"
-	"github.com/docker/mcp-gateway/pkg/policy"
 )
 
 // serverToolSetAdapter adapts a gateway server to the codemode.ToolSet interface
 type serverToolSetAdapter struct {
-	gateway      *Gateway
-	serverName   string
-	serverConfig *catalog.ServerConfig
-	session      *mcp.ServerSession
+	gateway    *Gateway
+	serverName string
 }
 
-func (a *serverToolSetAdapter) Tools(ctx context.Context) ([]*codemode.ToolWithHandler, error) {
-	// Get a client for this server
-	clientConfig := &clientConfig{
-		serverSession: a.session,
-		server:        a.gateway.mcpServer,
+func (a *serverToolSetAdapter) Tools(_ context.Context) ([]*codemode.ToolWithHandler, error) {
+	a.gateway.capabilitiesMu.RLock()
+	registrations := make([]ToolRegistration, 0)
+	for _, registration := range a.gateway.toolRegistrations {
+		if registration.ServerName == a.serverName {
+			registrations = append(registrations, registration)
+		}
 	}
+	a.gateway.capabilitiesMu.RUnlock()
 
-	client, err := a.gateway.clientPool.AcquireClient(ctx, a.serverConfig, clientConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire client for server %s: %w", a.serverName, err)
-	}
+	// Registration order comes from a map. Keep generated documentation and
+	// function installation deterministic without changing tool-name identity.
+	slices.SortFunc(registrations, func(left, right ToolRegistration) int {
+		return strings.Compare(left.Tool.Name, right.Tool.Name)
+	})
 
-	// List tools from the server
-	listResult, err := client.Session().ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tools from server %s: %w", a.serverName, err)
-	}
-
-	// Convert MCP tools to ToolWithHandler
-	var result []*codemode.ToolWithHandler
-	for _, tool := range listResult.Tools {
-		// Create a handler that calls the tool on the remote server
-		handler := func(tool *mcp.Tool) mcp.ToolHandler {
-			return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				if err := a.checkInvokePolicy(ctx, tool.Name, req.Session); err != nil {
-					return nil, err
-				}
-				// Forward the tool call to the actual server
-				return client.Session().CallTool(ctx, &mcp.CallToolParams{
-					Name:      tool.Name,
-					Arguments: req.Params.Arguments,
-				})
-			}
-		}(tool)
-
+	result := make([]*codemode.ToolWithHandler, 0, len(registrations))
+	for _, registration := range registrations {
 		result = append(result, &codemode.ToolWithHandler{
-			Tool:    tool,
-			Handler: handler,
+			Tool:    registration.Tool,
+			Handler: registration.Handler,
 		})
 	}
 
 	return result, nil
-}
-
-// checkInvokePolicy enforces the ActionInvoke policy for a backend tool before
-// code-mode dispatches it, matching the gate applied on the direct tool-call and
-// mcp-exec paths so code-mode cannot bypass an operator-configured policy.
-func (a *serverToolSetAdapter) checkInvokePolicy(ctx context.Context, toolName string, session *mcp.ServerSession) error {
-	if a.gateway.policyClient == nil {
-		return nil
-	}
-	policyReq := a.gateway.configuration.policyRequest(a.serverConfig.Name, toolName, policy.ActionInvoke)
-	decision, err := a.gateway.policyClient.Evaluate(ctx, policyReq)
-	event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(session))
-	submitAuditEvent(a.gateway.policyClient, event)
-	if err != nil {
-		return fmt.Errorf("policy check failed for %s/%s: %w", a.serverConfig.Name, toolName, err)
-	}
-	if !decision.Allowed {
-		return fmt.Errorf("policy denied tool %s on server %s: %s", toolName, a.serverConfig.Name, decision.Reason)
-	}
-	return nil
 }
 
 func addCodemodeHandler(g *Gateway) mcp.ToolHandler {
@@ -114,12 +74,13 @@ func addCodemodeHandler(g *Gateway) mcp.ToolHandler {
 			return nil, fmt.Errorf("name parameter is required")
 		}
 
-		// Validate that all requested servers exist
+		// Validate against the enabled-server set, not the full catalog. In
+		// profile mode configuration.servers includes catalog-only entries.
 		for _, serverName := range params.Servers {
-			if _, _, found := g.configuration.Find(serverName); !found {
+			if !slices.Contains(g.configuration.ServerNames(), serverName) {
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{&mcp.TextContent{
-						Text: fmt.Sprintf("Error: Server '%s' not found in configuration. Use mcp-find to search for available servers.", serverName),
+						Text: fmt.Sprintf("Error: Server '%s' is not enabled for this gateway session.", serverName),
 					}},
 				}, nil
 			}
@@ -128,12 +89,9 @@ func addCodemodeHandler(g *Gateway) mcp.ToolHandler {
 		// Create a tool set adapter for each server
 		var toolSets []codemode.ToolSet
 		for _, serverName := range params.Servers {
-			serverConfig, _, _ := g.configuration.Find(serverName)
 			toolSets = append(toolSets, &serverToolSetAdapter{
-				gateway:      g,
-				serverName:   serverName,
-				serverConfig: serverConfig,
-				session:      req.Session,
+				gateway:    g,
+				serverName: serverName,
 			})
 		}
 

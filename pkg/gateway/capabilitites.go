@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -177,7 +176,14 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 						capabilities.Tools = append(capabilities.Tools, ToolRegistration{
 							ServerName: serverConfig.Name,
 							Tool:       &prefixedTool,
-							Handler:    g.mcpServerToolHandler(serverConfig.Name, g.mcpServer, tool.Annotations, tool.Name),
+							Handler: withMCPServerToolTelemetry(
+								serverConfig,
+								g.withInvokePolicy(
+									serverConfig.Name,
+									tool.Name,
+									g.mcpServerToolHandler(serverConfig.Name, g.mcpServer, tool.Annotations, tool.Name),
+								),
+							),
 						})
 					}
 				}
@@ -285,7 +291,11 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 				capabilities.Tools = append(capabilities.Tools, ToolRegistration{
 					ServerName: serverName,
 					Tool:       &mcpTool,
-					Handler:    g.mcpToolHandler(serverName, tool),
+					Handler: g.withPOCIToolTelemetry(
+						serverName,
+						tool,
+						g.withInvokePolicy(serverName, tool.Name, g.pociToolHandler(tool)),
+					),
 				})
 			}
 
@@ -347,18 +357,17 @@ func isToolEnabled(configuration Configuration, serverName, serverImage, toolNam
 
 	for _, enabled := range enabledTools {
 		if enabled == "*" ||
-			strings.EqualFold(enabled, toolName) ||
-			strings.EqualFold(enabled, serverName+":"+toolName) ||
-			strings.EqualFold(enabled, serverName+":*") ||
-			strings.EqualFold(enabled, "*") {
+			enabled == toolName ||
+			enabled == serverName+":"+toolName ||
+			enabled == serverName+":*" {
 			return true
 		}
 	}
 
 	if serverImage != "" {
 		for _, enabled := range enabledTools {
-			if strings.EqualFold(enabled, serverImage+":"+toolName) ||
-				strings.EqualFold(enabled, serverImage+":*") {
+			if enabled == serverImage+":"+toolName ||
+				enabled == serverImage+":*" {
 				return true
 			}
 		}

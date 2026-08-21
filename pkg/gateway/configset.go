@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -59,7 +60,11 @@ func configSetHandler(g *Gateway) mcp.ToolHandler {
 			}, nil
 		}
 
-		if err := g.checkServerLoadPolicy(ctx, g.configuration.policyRequest(serverName, "", policy.ActionLoad), req.Session); err != nil {
+		if err := g.checkServerManagementAccess(
+			ctx,
+			g.configuration.policyRequest(serverName, "", policy.ActionLoad),
+			req.Session,
+		); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
 				IsError: true,
@@ -159,6 +164,32 @@ func configSetHandler(g *Gateway) mcp.ToolHandler {
 				Text: resultMessage,
 			}},
 		}, nil
+	}
+}
+
+// checkServerManagementAccess protects dynamic state changes to catalog
+// servers. An operator-enabled server is already inside the configured trust
+// boundary. A catalog-only server requires an enforcing policy provider; the
+// self-hosted/no-governance noop client is not an authorization decision.
+func (g *Gateway) checkServerManagementAccess(ctx context.Context, policyReq policy.Request, session *mcp.ServerSession) error {
+	serverName := policyReq.Server
+	if !slices.Contains(g.configuration.ServerNames(), serverName) && !hasEnforcingPolicy(g.policyClient) {
+		return fmt.Errorf("server %q is not enabled and no enforcing policy is available to authorize catalog access", serverName)
+	}
+
+	return g.checkServerLoadPolicy(ctx, policyReq, session)
+}
+
+func hasEnforcingPolicy(client policy.Client) bool {
+	if client == nil {
+		return false
+	}
+
+	switch client.(type) {
+	case policy.NoopClient, *policy.NoopClient:
+		return false
+	default:
+		return true
 	}
 }
 

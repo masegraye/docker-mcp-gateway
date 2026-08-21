@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -57,6 +58,71 @@ func TestValidateExternalToolNameCollisionsRejectsReservedGatewayToolName(t *tes
 	require.ErrorIs(t, err, errToolNameCollision)
 	assert.Contains(t, err.Error(), "reserved gateway tool name")
 	assert.Contains(t, err.Error(), "mcp-exec")
+}
+
+func TestValidateExternalToolNameCollisionsRejectsCaseVariantReservedGatewayToolName(t *testing.T) {
+	err := validateExternalToolNameCollisions([]ToolRegistration{
+		{
+			ServerName: "untrusted",
+			Tool:       &mcp.Tool{Name: "MCP-EXEC"},
+		},
+	}, nil)
+
+	require.ErrorIs(t, err, errToolNameCollision)
+	assert.Contains(t, err.Error(), "differs only by case")
+	assert.Contains(t, err.Error(), "mcp-exec")
+}
+
+func TestValidateExternalToolNameCollisionsRejectsCaseVariantDuplicates(t *testing.T) {
+	err := validateExternalToolNameCollisions([]ToolRegistration{
+		{
+			ServerName: "alpha",
+			Tool:       &mcp.Tool{Name: "Search"},
+		},
+		{
+			ServerName: "beta",
+			Tool:       &mcp.Tool{Name: "search"},
+		},
+	}, nil)
+
+	require.ErrorIs(t, err, errToolNameCollision)
+	assert.Contains(t, err.Error(), "case-variant tool name")
+	assert.Contains(t, err.Error(), `"Search"`)
+	assert.Contains(t, err.Error(), `"search"`)
+}
+
+func TestValidateExternalToolNameCollisionsRejectsCaseVariantExistingTool(t *testing.T) {
+	existing := map[string]ToolRegistration{
+		"Deploy": {
+			ServerName: "trusted",
+			Tool:       &mcp.Tool{Name: "Deploy"},
+		},
+	}
+
+	err := validateExternalToolNameCollisions([]ToolRegistration{
+		{
+			ServerName: "untrusted",
+			Tool:       &mcp.Tool{Name: "deploy"},
+		},
+	}, existing)
+
+	require.ErrorIs(t, err, errToolNameCollision)
+	assert.Contains(t, err.Error(), "differs only by case")
+	assert.Contains(t, err.Error(), `server "trusted"`)
+}
+
+func TestToolAndPromptNamesUseSeparateCollisionNamespaces(t *testing.T) {
+	tools := []ToolRegistration{
+		{ServerName: "tool-server", Tool: &mcp.Tool{Name: "Summarize"}},
+	}
+	prompts := &Capabilities{
+		Prompts: []PromptRegistration{
+			{ServerName: "prompt-server", Prompt: &mcp.Prompt{Name: "summarize"}},
+		},
+	}
+
+	require.NoError(t, validateExternalToolNameCollisions(tools, nil))
+	require.NoError(t, validateExternalCapabilityNameCollisions(prompts, capabilityNameIndexes{}, true))
 }
 
 func TestValidateExternalToolNameCollisionsRejectsDynamicMcpExecShadow(t *testing.T) {
@@ -194,6 +260,23 @@ func TestValidateExternalCapabilityNameCollisionsRejectsResourceURIShadow(t *tes
 	assert.Contains(t, err.Error(), "file://shared/readme")
 }
 
+func TestValidateExternalCapabilityNameCollisionsKeepsResourceURICaseSignificant(t *testing.T) {
+	err := validateExternalCapabilityNameCollisions(&Capabilities{
+		Resources: []ResourceRegistration{
+			{
+				ServerName: "alpha",
+				Resource:   &mcp.Resource{URI: "file://shared/Readme"},
+			},
+			{
+				ServerName: "beta",
+				Resource:   &mcp.Resource{URI: "file://shared/readme"},
+			},
+		},
+	}, capabilityNameIndexes{}, false)
+
+	require.NoError(t, err)
+}
+
 func TestValidateExternalCapabilityNameCollisionsRejectsDuplicateResourceTemplates(t *testing.T) {
 	err := validateExternalCapabilityNameCollisions(&Capabilities{
 		ResourceTemplates: []ResourceTemplateRegistration{
@@ -315,6 +398,32 @@ func TestCatalogToolNameWarningsReportPotentialMcpFindCollisions(t *testing.T) {
 	assert.Contains(t, warnings[0]+warnings[1]+warnings[2], "reserved for a gateway internal tool")
 	assert.Contains(t, warnings[0]+warnings[1]+warnings[2], `conflicts with server "trusted"`)
 	assert.Contains(t, warnings[0]+warnings[1]+warnings[2], "duplicates tool")
+}
+
+func TestCatalogToolNameWarningsReportCaseVariantCollisions(t *testing.T) {
+	g := &Gateway{
+		toolRegistrations: map[string]ToolRegistration{
+			"Deploy": {
+				ServerName: "trusted",
+				Tool:       &mcp.Tool{Name: "Deploy"},
+			},
+		},
+	}
+
+	warnings := g.catalogToolNameWarnings("candidate", catalog.Server{
+		Tools: []catalog.Tool{
+			{Name: "MCP-ADD"},
+			{Name: "deploy"},
+			{Name: "Search"},
+			{Name: "search"},
+		},
+	})
+
+	require.Len(t, warnings, 3)
+	combined := strings.Join(warnings, "\n")
+	assert.Contains(t, combined, "differs only by case from reserved gateway internal tool")
+	assert.Contains(t, combined, `differs only by case from server "trusted" tool name "Deploy"`)
+	assert.Contains(t, combined, `differs only by case from tool "Search"`)
 }
 
 func TestBM25StrategyIncludesToolNameWarnings(t *testing.T) {

@@ -73,6 +73,7 @@ func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*Discover
 
 	var resourceMetadata *oauthhelpers.ProtectedResourceMetadata
 	authServerURL := defaultAuthServerURL
+	resourceMetadataClient := sameOriginHTTPClient(client, serverURL)
 
 	resourceMetadataURL := ""
 	if challenges != nil {
@@ -80,15 +81,32 @@ func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*Discover
 	}
 
 	if resourceMetadataURL != "" {
-		resourceMetadata, err = fetchOAuthProtectedResourceMetadata(ctx, client, resourceMetadataURL)
-		if err == nil && resourceMetadata != nil && resourceMetadata.AuthorizationServer != "" {
+		if err := validateSameOrigin(serverURL, resourceMetadataURL); err != nil {
+			return nil, fmt.Errorf("invalid protected resource metadata URL: %w", err)
+		}
+		resourceMetadata, err = fetchOAuthProtectedResourceMetadata(ctx, resourceMetadataClient, resourceMetadataURL)
+		if err != nil {
+			return nil, fmt.Errorf("fetching protected resource metadata from %s: %w", resourceMetadataURL, err)
+		}
+		if err := validateProtectedResource(serverURL, resourceMetadata.Resource); err != nil {
+			return nil, err
+		}
+		if resourceMetadata.AuthorizationServer != "" {
 			authServerURL = resourceMetadata.AuthorizationServer
 		}
 	} else {
-		wellKnownURL := fmt.Sprintf("%s/.well-known/oauth-protected-resource", defaultAuthServerURL)
-		resourceMetadata, err = fetchOAuthProtectedResourceMetadata(ctx, client, wellKnownURL)
-		if err == nil && resourceMetadata != nil && resourceMetadata.AuthorizationServer != "" {
-			authServerURL = resourceMetadata.AuthorizationServer
+		wellKnownURL, buildErr := buildRFC9728WellKnownURL(ctx, serverURL)
+		if buildErr != nil {
+			return nil, fmt.Errorf("building protected resource metadata URL: %w", buildErr)
+		}
+		resourceMetadata, err = fetchOAuthProtectedResourceMetadata(ctx, resourceMetadataClient, wellKnownURL)
+		if err == nil && resourceMetadata != nil {
+			if err := validateProtectedResource(serverURL, resourceMetadata.Resource); err != nil {
+				return nil, err
+			}
+			if resourceMetadata.AuthorizationServer != "" {
+				authServerURL = resourceMetadata.AuthorizationServer
+			}
 		}
 	}
 
@@ -101,8 +119,8 @@ func DiscoverOAuthRequirements(ctx context.Context, serverURL string) (*Discover
 		Discovery: oauthhelpers.Discovery{
 			RequiresOAuth: true,
 
-			ResourceURL:         defaultAuthServerURL,
-			ResourceServer:      defaultAuthServerURL,
+			ResourceURL:         serverURL,
+			ResourceServer:      serverURL,
 			AuthorizationServer: authServerURL,
 
 			Issuer:                            authServerMetadata.Issuer,
@@ -350,6 +368,87 @@ func validateAuthorizationServerIssuer(expected, actual string) error {
 		return fmt.Errorf("authorization server metadata issuer %q does not match requested issuer %q", actual, expected)
 	}
 	return nil
+}
+
+func validateProtectedResource(expected, actual string) error {
+	if actual != expected {
+		return fmt.Errorf("protected resource metadata resource %q does not match requested resource %q", actual, expected)
+	}
+	return nil
+}
+
+func validateSameOrigin(serverURL, metadataURL string) error {
+	server, err := url.Parse(serverURL)
+	if err != nil {
+		return fmt.Errorf("invalid server URL: %w", err)
+	}
+	metadata, err := url.Parse(metadataURL)
+	if err != nil {
+		return fmt.Errorf("invalid metadata URL: %w", err)
+	}
+	if server.Scheme == "" || server.Hostname() == "" || server.User != nil {
+		return fmt.Errorf("server URL must be an absolute URL without user information")
+	}
+	if metadata.Scheme == "" || metadata.Hostname() == "" || metadata.User != nil {
+		return fmt.Errorf("metadata URL must be an absolute URL without user information")
+	}
+
+	serverPort := server.Port()
+	if serverPort == "" {
+		serverPort = defaultPort(server.Scheme)
+	}
+	metadataPort := metadata.Port()
+	if metadataPort == "" {
+		metadataPort = defaultPort(metadata.Scheme)
+	}
+	if !strings.EqualFold(server.Scheme, metadata.Scheme) ||
+		!strings.EqualFold(server.Hostname(), metadata.Hostname()) ||
+		serverPort != metadataPort {
+		return fmt.Errorf("metadata URL %q must use the same origin as MCP server %q", metadataURL, serverURL)
+	}
+	return nil
+}
+
+func sameOriginHTTPClient(client *http.Client, originURL string) *http.Client {
+	cloned := *client
+	cloned.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+		return validateSameOrigin(originURL, req.URL.String())
+	}
+	return &cloned
+}
+
+func defaultPort(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func buildRFC9728WellKnownURL(ctx context.Context, resourceURL string) (string, error) {
+	parsed, err := url.Parse(resourceURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid resource URL: %w", err)
+	}
+	if err := remoteurl.Validate(ctx, resourceURL); err != nil {
+		return "", err
+	}
+	if parsed.Fragment != "" {
+		return "", fmt.Errorf("resource URL must not contain fragment")
+	}
+
+	resourcePath := parsed.EscapedPath()
+	if resourcePath == "/" {
+		resourcePath = ""
+	}
+	metadataURL := fmt.Sprintf("%s://%s/.well-known/oauth-protected-resource%s", parsed.Scheme, strings.ToLower(parsed.Host), resourcePath)
+	if parsed.RawQuery != "" {
+		metadataURL += "?" + parsed.RawQuery
+	}
+	return metadataURL, nil
 }
 
 func buildRFC8414WellKnownURL(ctx context.Context, issuerURL string) (string, error) {

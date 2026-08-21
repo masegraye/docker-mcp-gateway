@@ -3,13 +3,13 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/docker/mcp-gateway/pkg/log"
-	"github.com/docker/mcp-gateway/pkg/policy"
 )
 
 func addMcpExecHandler(g *Gateway) mcp.ToolHandler {
@@ -79,32 +79,21 @@ func addMcpExecHandler(g *Gateway) mcp.ToolHandler {
 			Extra: req.Extra,
 		}
 
-		// Policy check before executing the tool
-		if g.policyClient != nil {
-			policyReq := g.configuration.policyRequest(toolReg.ServerName, toolName, policy.ActionInvoke)
-			decision, err := g.policyClient.Evaluate(ctx, policyReq)
-			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
-			submitAuditEvent(g.policyClient, event)
-			if err != nil {
-				log.Logf("policy check failed for mcp-exec %s: %v (denying)", toolName, err)
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{
-						Text: fmt.Sprintf("Error: Tool '%s' blocked due to policy check error: %v", toolName, err),
-					}},
-				}, nil
-			}
-			if !decision.Allowed {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{
-						Text: fmt.Sprintf("Error: Tool '%s' blocked by policy: %s", toolName, decision.Reason),
-					}},
-				}, nil
-			}
-		}
-
 		// Execute the tool using its registered handler
 		result, err := toolReg.Handler(ctx, toolCallRequest)
 		if err != nil {
+			var policyErr *invokePolicyError
+			if errors.As(err, &policyErr) {
+				if policyErr.cause != nil {
+					log.Logf("policy check failed for mcp-exec %s: %v (denying)", toolName, policyErr.cause)
+					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{
+						Text: fmt.Sprintf("Error: Tool '%s' blocked due to policy check error: %v", toolName, policyErr.cause),
+					}}}, nil
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{
+					Text: fmt.Sprintf("Error: Tool '%s' blocked by policy: %s", toolName, policyErr.reason),
+				}}}, nil
+			}
 			return nil, fmt.Errorf("tool execution failed: %w", err)
 		}
 

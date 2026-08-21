@@ -106,7 +106,7 @@ func TestActivateProfileRejectsMissingRequiredConfig(t *testing.T) {
 		},
 	}
 
-	g := &Gateway{}
+	g := &Gateway{policyClient: newMockPolicyClient()}
 	err := g.ActivateProfile(t.Context(), workingset.WorkingSet{
 		ID:   "test",
 		Name: "test",

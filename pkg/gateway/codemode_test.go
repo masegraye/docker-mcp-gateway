@@ -16,9 +16,9 @@ import (
 )
 
 func TestCodeModeUsesRegisteredServerTools(t *testing.T) {
-	session := &mcp.ServerSession{}
-	extra := &mcp.RequestExtra{}
 	var called []string
+	var sessions []*mcp.ServerSession
+	var extras []*mcp.RequestExtra
 
 	registration := func(serverName, toolName string) ToolRegistration {
 		return ToolRegistration{
@@ -29,9 +29,9 @@ func TestCodeModeUsesRegisteredServerTools(t *testing.T) {
 				InputSchema: map[string]any{"type": "object"},
 			},
 			Handler: func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				require.Same(t, session, req.Session)
-				require.Same(t, extra, req.Extra)
 				called = append(called, req.Params.Name)
+				sessions = append(sessions, req.Session)
+				extras = append(extras, req.Extra)
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{&mcp.TextContent{Text: req.Params.Name}},
 				}, nil
@@ -48,8 +48,6 @@ func TestCodeModeUsesRegisteredServerTools(t *testing.T) {
 	adapter := &serverToolSetAdapter{
 		gateway:    g,
 		serverName: "backend-server",
-		session:    session,
-		extra:      extra,
 	}
 
 	registeredTools, err := adapter.Tools(context.Background())
@@ -66,23 +64,46 @@ func TestCodeModeUsesRegisteredServerTools(t *testing.T) {
 
 	arguments, err := json.Marshal(codemode.RunToolsWithJavascriptArgs{Script: "return ReadFile({});"})
 	require.NoError(t, err)
+	firstSession := &mcp.ServerSession{}
+	firstExtra := &mcp.RequestExtra{}
 	result, err := generatedTools[0].Handler(context.Background(), &mcp.CallToolRequest{
-		Params: &mcp.CallToolParamsRaw{Arguments: arguments},
+		Session: firstSession,
+		Params:  &mcp.CallToolParamsRaw{Arguments: arguments},
+		Extra:   firstExtra,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 	assert.Equal(t, "ReadFile", result.Content[0].(*mcp.TextContent).Text)
-	assert.Equal(t, []string{"ReadFile"}, called)
+
+	secondSession := &mcp.ServerSession{}
+	secondExtra := &mcp.RequestExtra{}
+	result, err = generatedTools[0].Handler(context.Background(), &mcp.CallToolRequest{
+		Session: secondSession,
+		Params:  &mcp.CallToolParamsRaw{Arguments: arguments},
+		Extra:   secondExtra,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	assert.Equal(t, "ReadFile", result.Content[0].(*mcp.TextContent).Text)
+	assert.Equal(t, []string{"ReadFile", "ReadFile"}, called)
+	require.Len(t, sessions, 2)
+	assert.Same(t, firstSession, sessions[0])
+	assert.Same(t, secondSession, sessions[1])
+	require.Len(t, extras, 2)
+	assert.Same(t, firstExtra, extras[0])
+	assert.Same(t, secondExtra, extras[1])
 
 	caseVariantArguments, err := json.Marshal(codemode.RunToolsWithJavascriptArgs{Script: "return readfile({});"})
 	require.NoError(t, err)
 	result, err = generatedTools[0].Handler(context.Background(), &mcp.CallToolRequest{
-		Params: &mcp.CallToolParamsRaw{Arguments: caseVariantArguments},
+		Session: secondSession,
+		Params:  &mcp.CallToolParamsRaw{Arguments: caseVariantArguments},
+		Extra:   secondExtra,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "readfile")
-	assert.Equal(t, []string{"ReadFile"}, called, "case-variant tool must not reach a backend handler")
+	assert.Equal(t, []string{"ReadFile", "ReadFile"}, called, "case-variant tool must not reach a backend handler")
 }
 
 func TestCodeModeRejectsServersOutsideEnabledSet(t *testing.T) {

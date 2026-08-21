@@ -10,7 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func (c *tool) runJavascript(ctx context.Context, script string) (string, error) {
+func (c *tool) runJavascript(ctx context.Context, script string, request *mcp.CallToolRequest) (string, error) {
 	vm := goja.New()
 
 	// Inject console object to the help the LLM debug its own code.
@@ -24,7 +24,7 @@ func (c *tool) runJavascript(ctx context.Context, script string) (string, error)
 		}
 
 		for _, toolWithHandler := range allTools {
-			_ = vm.Set(toolWithHandler.Tool.Name, callTool(ctx, toolWithHandler))
+			_ = vm.Set(toolWithHandler.Tool.Name, callTool(ctx, toolWithHandler, request))
 		}
 	}
 
@@ -47,7 +47,7 @@ func (c *tool) runJavascript(ctx context.Context, script string) (string, error)
 	return fmt.Sprintf("%v", result), nil
 }
 
-func callTool(ctx context.Context, toolWithHandler *ToolWithHandler) func(args map[string]any) (string, error) {
+func callTool(ctx context.Context, toolWithHandler *ToolWithHandler, request *mcp.CallToolRequest) func(args map[string]any) (string, error) {
 	return func(args map[string]any) (string, error) {
 		// Extract required fields from InputSchema
 		var required []string
@@ -78,10 +78,13 @@ func callTool(ctx context.Context, toolWithHandler *ToolWithHandler) func(args m
 		}
 
 		result, err := toolWithHandler.Handler(ctx, &mcp.CallToolRequest{
+			Session: request.Session,
 			Params: &mcp.CallToolParamsRaw{
+				Meta:      request.Params.Meta,
 				Name:      toolWithHandler.Tool.Name,
 				Arguments: arguments,
 			},
+			Extra: request.Extra,
 		})
 		if err != nil {
 			return "", err

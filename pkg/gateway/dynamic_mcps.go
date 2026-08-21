@@ -50,7 +50,7 @@ func (g *Gateway) createMcpAddTool(clientConfig *clientConfig) *ToolRegistration
 	tool := &mcp.Tool{
 		Name: "mcp-add",
 		Description: `Add a new MCP server to the session. 
-The server must exist in the catalog.`,
+The server must already be enabled or be authorized by an enforcing policy provider.`,
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
@@ -79,6 +79,7 @@ func (g *Gateway) createMcpConfigSetTool(_ *clientConfig) *ToolRegistration {
 	tool := &mcp.Tool{
 		Name: "mcp-config-set",
 		Description: `Set configuration for an MCP server. 
+The server must already be enabled or be authorized by an enforcing policy provider.
 The config object will be validated against the server's config schema. If validation fails, the error message will include the correct schema.`,
 		InputSchema: &jsonschema.Schema{
 			Type: "object",

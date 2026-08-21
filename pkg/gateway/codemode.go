@@ -16,8 +16,6 @@ import (
 type serverToolSetAdapter struct {
 	gateway    *Gateway
 	serverName string
-	session    *mcp.ServerSession
-	extra      *mcp.RequestExtra
 }
 
 func (a *serverToolSetAdapter) Tools(_ context.Context) ([]*codemode.ToolWithHandler, error) {
@@ -38,17 +36,9 @@ func (a *serverToolSetAdapter) Tools(_ context.Context) ([]*codemode.ToolWithHan
 
 	result := make([]*codemode.ToolWithHandler, 0, len(registrations))
 	for _, registration := range registrations {
-		registeredHandler := registration.Handler
 		result = append(result, &codemode.ToolWithHandler{
-			Tool: registration.Tool,
-			Handler: func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				// Code mode creates an internal request for each JavaScript function.
-				// Preserve the originating request context while reusing the handler
-				// that passed allowlist and ActionLoad filtering at registration.
-				req.Session = a.session
-				req.Extra = a.extra
-				return registeredHandler(ctx, req)
-			},
+			Tool:    registration.Tool,
+			Handler: registration.Handler,
 		})
 	}
 
@@ -102,8 +92,6 @@ func addCodemodeHandler(g *Gateway) mcp.ToolHandler {
 			toolSets = append(toolSets, &serverToolSetAdapter{
 				gateway:    g,
 				serverName: serverName,
-				session:    req.Session,
-				extra:      req.Extra,
 			})
 		}
 

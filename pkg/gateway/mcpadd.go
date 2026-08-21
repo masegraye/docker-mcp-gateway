@@ -21,7 +21,6 @@ import (
 	"github.com/docker/mcp-gateway/pkg/oauth"
 	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 	"github.com/docker/mcp-gateway/pkg/oci"
-	"github.com/docker/mcp-gateway/pkg/policy"
 )
 
 func addServerHandler(g *Gateway, clientConfig *clientConfig) mcp.ToolHandler {
@@ -67,27 +66,11 @@ func addServerHandler(g *Gateway, clientConfig *clientConfig) mcp.ToolHandler {
 			}, nil
 		}
 
-		// Check if server is allowed by policy before adding
-		if g.policyClient != nil {
-			policyReq := g.configuration.policyRequest(serverName, "", policy.ActionLoad)
-			decision, err := g.policyClient.Evaluate(ctx, policyReq)
-			event := buildAuditEvent(policyReq, decision, err, auditClientInfoFromSession(req.Session))
-			submitAuditEvent(g.policyClient, event)
-			if err != nil {
-				log.Logf("policy check failed for server %s: %v (denying)", serverName, err)
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{
-						Text: fmt.Sprintf("Error: Server '%s' blocked by policy check error: %v", serverName, err),
-					}},
-				}, nil
-			}
-			if !decision.Allowed {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{
-						Text: fmt.Sprintf("Error: Server '%s' is blocked by policy: %s", serverName, decision.Reason),
-					}},
-				}, nil
-			}
+		if err := g.checkServerManagementAccess(ctx, serverName, req.Session); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
 		}
 
 		// Append the new server to the current serverNames if not already present

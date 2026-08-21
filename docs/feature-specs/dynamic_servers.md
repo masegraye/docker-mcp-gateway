@@ -22,9 +22,9 @@ When enabled, the gateway adds five internal management tools to the available t
 
 ### Security boundary
 
-The registry is the gateway's current active set, not an authorization allowlist. When dynamic tools are enabled, `mcp-add` is intentionally allowed to activate another server from the configured catalog. Every activation is evaluated with the policy client's `load` action before the server is added.
+The registry is the gateway's operator-enabled active set. Servers already in that set can be managed without an external policy provider. A catalog-only server can be activated or configured by a dynamic tool only when a non-noop policy provider explicitly allows its `load` action. The self-hosted/no-governance noop client is not treated as authorization to cross from the catalog into the active set.
 
-Deployments that require a fixed server allowlist should pass the allowed names with `--servers`, which disables dynamic tools. Deployments that keep dynamic tools enabled should use policy rules to restrict which catalog servers may be loaded.
+Deployments that need catalog-wide dynamic activation must configure governance policy rules for the servers that may be loaded. Deployments requiring a fixed server set can pass the allowed names with `--servers`, which disables dynamic tools entirely.
 
 ## Available Tools
 
@@ -68,6 +68,7 @@ Deployments that require a fixed server allowlist should pass the allowed names 
 
 **Behavior**:
 - Checks if the server exists in the catalog
+- Requires the server to be enabled already or explicitly allowed by an enforcing policy provider
 - Adds the server to the active server list (avoiding duplicates)
 - Fetches updated secrets for the new server
 - Reloads the gateway configuration
@@ -148,6 +149,7 @@ Deployments that require a fixed server allowlist should pass the allowed names 
 ```
 
 **Behavior**:
+- Requires the server to be enabled already or explicitly allowed by an enforcing policy provider
 - Creates or updates server configuration
 - Reloads the gateway configuration to apply changes
 - Returns success message with old/new values
@@ -204,7 +206,8 @@ AI: Configuration updated. The server now has restricted access.
 
 ## Security Considerations
 
-- **Catalog validation**: Only servers that exist in the catalog can be added
+- **Catalog validation**: Only servers that exist in the catalog can be considered
+- **Activation authorization**: Catalog-only servers require an enforcing policy provider; a noop or missing policy cannot authorize activation or configuration
 - **Secret management**: Secrets are fetched securely through Docker Desktop's secrets API
 - **Configuration isolation**: Server configurations are isolated and validated
 - **URL validation**: Official registry imports require valid HTTP/HTTPS URLs

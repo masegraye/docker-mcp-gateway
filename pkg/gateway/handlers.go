@@ -112,44 +112,8 @@ func (g *Gateway) mcpServerToolHandler(serverName string, server *mcp.Server, _ 
 			fmt.Fprintf(os.Stderr, "[MCP-HANDLER] Tool call received: %s from server: %s\n", req.Params.Name, serverConfig.Name)
 		}
 
-		// Start telemetry span for tool call
-		startTime := time.Now()
-		serverTransportType := inferServerTransportType(serverConfig)
-
-		// Build span attributes
-		spanAttrs := []attribute.KeyValue{
-			attribute.String("mcp.server.name", serverConfig.Name),
-			attribute.String("mcp.server.type", serverTransportType),
-		}
-
-		// Add additional server-specific attributes
-		if serverConfig.Spec.Image != "" {
-			spanAttrs = append(spanAttrs, attribute.String("mcp.server.image", serverConfig.Spec.Image))
-		}
-		if serverConfig.Spec.SSEEndpoint != "" {
-			spanAttrs = append(spanAttrs, attribute.String("mcp.server.endpoint", serverConfig.Spec.SSEEndpoint))
-		} else if serverConfig.Spec.Remote.URL != "" {
-			spanAttrs = append(spanAttrs, attribute.String("mcp.server.endpoint", serverConfig.Spec.Remote.URL))
-		}
-
-		ctx, span := telemetry.StartToolCallSpan(ctx, req.Params.Name, spanAttrs...)
-		defer span.End()
-
-		// Record tool call counter with server attribution
-		telemetry.ToolCallCounter.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("mcp.server.name", serverConfig.Name),
-				attribute.String("mcp.server.type", serverTransportType),
-				attribute.String("mcp.tool.name", req.Params.Name),
-				attribute.String("mcp.client.name", req.Session.InitializeParams().ClientInfo.Name),
-			),
-		)
-
 		client, err := g.clientPool.AcquireClient(ctx, serverConfig, getClientConfig(req.Session, server))
 		if err != nil {
-			// Record error in telemetry
-			telemetry.RecordToolError(ctx, span, serverConfig.Name, serverTransportType, req.Params.Name)
-			span.SetStatus(codes.Error, "Failed to acquire client")
 			return nil, err
 		}
 		defer g.clientPool.ReleaseClient(client)
@@ -158,8 +122,6 @@ func (g *Gateway) mcpServerToolHandler(serverName string, server *mcp.Server, _ 
 		var args any
 		if len(req.Params.Arguments) > 0 {
 			if jsonErr := json.Unmarshal(req.Params.Arguments, &args); jsonErr != nil {
-				telemetry.RecordToolError(ctx, span, serverConfig.Name, serverTransportType, req.Params.Name)
-				span.SetStatus(codes.Error, "Failed to unmarshal arguments")
 				return nil, fmt.Errorf("failed to unmarshal arguments: %w", jsonErr)
 			}
 		}
@@ -171,26 +133,10 @@ func (g *Gateway) mcpServerToolHandler(serverName string, server *mcp.Server, _ 
 
 		// Execute the tool call
 		result, err := client.Session().CallTool(ctx, params)
-
-		// Record duration
-		duration := time.Since(startTime).Milliseconds()
-		telemetry.ToolCallDuration.Record(ctx, float64(duration),
-			metric.WithAttributes(
-				attribute.String("mcp.server.name", serverConfig.Name),
-				attribute.String("mcp.server.type", serverTransportType),
-				attribute.String("mcp.tool.name", req.Params.Name),
-				attribute.String("mcp.client.name", req.Session.InitializeParams().ClientInfo.Name),
-			),
-		)
-
 		if err != nil {
-			// Record error in telemetry
-			telemetry.RecordToolError(ctx, span, serverConfig.Name, serverTransportType, req.Params.Name)
-			span.SetStatus(codes.Error, "Tool execution failed")
 			return nil, err
 		}
 
-		span.SetStatus(codes.Ok, "")
 		return result, nil
 	}
 }

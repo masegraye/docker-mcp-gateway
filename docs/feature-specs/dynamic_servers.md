@@ -22,7 +22,7 @@ When enabled, the gateway adds five internal management tools to the available t
 
 ### Security boundary
 
-The registry is the gateway's operator-enabled active set. Servers already in that set can be managed without an external policy provider. A catalog-only server can be activated or configured by a dynamic tool only when a non-noop policy provider explicitly allows its `load` action. The self-hosted/no-governance noop client is not treated as authorization to cross from the catalog into the active set.
+The registry is the gateway's operator-enabled active set. Servers already in that set can be managed without an external policy provider. A catalog-only server can be activated or configured—individually or through a profile—only when a non-noop policy provider explicitly allows its `load` action. The self-hosted/no-governance noop client is not treated as authorization to cross from the catalog into the active set.
 
 Deployments that need catalog-wide dynamic activation must configure governance policy rules for the servers that may be loaded. Deployments requiring a fixed server set can pass the allowed names with `--servers`, which disables dynamic tools entirely.
 
@@ -207,7 +207,7 @@ AI: Configuration updated. The server now has restricted access.
 ## Security Considerations
 
 - **Catalog validation**: Only servers that exist in the catalog can be considered
-- **Activation authorization**: Catalog-only servers require an enforcing policy provider; a noop or missing policy cannot authorize activation or configuration
+- **Activation authorization**: Catalog-only servers require an enforcing policy provider; a noop or missing policy cannot authorize individual, profile-based, or configuration-driven activation
 - **Secret management**: Secrets are fetched securely through Docker Desktop's secrets API
 - **Configuration isolation**: Server configurations are isolated and validated
 - **URL validation**: Official registry imports require valid HTTP/HTTPS URLs

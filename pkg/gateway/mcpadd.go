@@ -21,6 +21,7 @@ import (
 	"github.com/docker/mcp-gateway/pkg/oauth"
 	"github.com/docker/mcp-gateway/pkg/oauth/dcr"
 	"github.com/docker/mcp-gateway/pkg/oci"
+	"github.com/docker/mcp-gateway/pkg/policy"
 )
 
 func addServerHandler(g *Gateway, clientConfig *clientConfig) mcp.ToolHandler {
@@ -66,7 +67,11 @@ func addServerHandler(g *Gateway, clientConfig *clientConfig) mcp.ToolHandler {
 			}, nil
 		}
 
-		if err := g.checkServerManagementAccess(ctx, serverName, req.Session); err != nil {
+		if err := g.checkServerManagementAccess(
+			ctx,
+			g.configuration.policyRequest(serverName, "", policy.ActionLoad),
+			req.Session,
+		); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
 				IsError: true,

@@ -176,7 +176,7 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 						capabilities.Tools = append(capabilities.Tools, ToolRegistration{
 							ServerName: serverConfig.Name,
 							Tool:       &prefixedTool,
-							Handler: withMCPServerPolicyErrorTelemetry(
+							Handler: withMCPServerToolTelemetry(
 								serverConfig,
 								g.withInvokePolicy(
 									serverConfig.Name,

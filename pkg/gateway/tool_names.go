@@ -175,6 +175,7 @@ func validateExternalCapabilityNameCollisions(caps *Capabilities, existing capab
 		existing.Prompts,
 		reservedPrompts,
 		"disable one server or expose unique prompt names",
+		true,
 	); err != nil {
 		return err
 	}
@@ -184,6 +185,7 @@ func validateExternalCapabilityNameCollisions(caps *Capabilities, existing capab
 		existing.Resources,
 		nil,
 		"disable one server or expose unique resource URIs",
+		false,
 	); err != nil {
 		return err
 	}
@@ -193,6 +195,7 @@ func validateExternalCapabilityNameCollisions(caps *Capabilities, existing capab
 		existing.ResourceTemplates,
 		nil,
 		"disable one server or expose unique resource template URI templates",
+		false,
 	); err != nil {
 		return err
 	}
@@ -200,7 +203,7 @@ func validateExternalCapabilityNameCollisions(caps *Capabilities, existing capab
 	return nil
 }
 
-func validateCapabilityIdentityCollisions(kind string, registrations []capabilityIdentityRegistration, existing map[string]string, reserved map[string]struct{}, mitigation string) error {
+func validateCapabilityIdentityCollisions(kind string, registrations []capabilityIdentityRegistration, existing map[string]string, reserved map[string]struct{}, mitigation string, caseInsensitive bool) error {
 	seen := make(map[string]capabilityIdentityRegistration, len(registrations))
 
 	for _, registration := range sortedCapabilityIdentityRegistrations(registrations) {
@@ -208,11 +211,11 @@ func validateCapabilityIdentityCollisions(kind string, registrations []capabilit
 			return capabilityNameCollisionError{message: fmt.Sprintf("%s collision: %s exposes an empty %s", kind, capabilityOwner(registration.serverName), kind)}
 		}
 
-		if _, ok := reserved[registration.identifier]; ok {
+		if _, ok := findIdentityMapEntry(reserved, registration.identifier, caseInsensitive); ok {
 			return capabilityNameCollisionError{message: fmt.Sprintf("%s collision: %s exposes reserved gateway %s %q; %s", kind, capabilityOwner(registration.serverName), kind, registration.identifier, mitigation)}
 		}
 
-		if previous, ok := seen[registration.identifier]; ok {
+		if previous, ok := findIdentityMapEntry(seen, registration.identifier, caseInsensitive); ok {
 			return capabilityNameCollisionError{message: fmt.Sprintf("%s collision: %s and %s both expose %s %q; %s", kind, capabilityOwner(previous.serverName), capabilityOwner(registration.serverName), kind, registration.identifier, mitigation)}
 		}
 		seen[registration.identifier] = registration
@@ -220,12 +223,21 @@ func validateCapabilityIdentityCollisions(kind string, registrations []capabilit
 		if existing == nil {
 			continue
 		}
-		if previousServerName, ok := existing[registration.identifier]; ok {
+		if previousServerName, ok := findIdentityMapEntry(existing, registration.identifier, caseInsensitive); ok {
 			return capabilityNameCollisionError{message: fmt.Sprintf("%s collision: %s would shadow %s for %s %q; %s", kind, capabilityOwner(registration.serverName), capabilityOwner(previousServerName), kind, registration.identifier, mitigation)}
 		}
 	}
 
 	return nil
+}
+
+func findIdentityMapEntry[V any](entries map[string]V, candidate string, caseInsensitive bool) (V, bool) {
+	if caseInsensitive {
+		_, value, ok := findEqualFoldMapEntry(entries, candidate)
+		return value, ok
+	}
+	value, ok := entries[candidate]
+	return value, ok
 }
 
 func promptIdentities(registrations []PromptRegistration) []capabilityIdentityRegistration {

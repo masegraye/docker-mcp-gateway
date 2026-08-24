@@ -472,3 +472,39 @@ func TestBM25StrategyIncludesToolNameWarnings(t *testing.T) {
 	require.Len(t, response.Servers[0].ToolNameWarnings, 1)
 	assert.Contains(t, response.Servers[0].ToolNameWarnings[0], "reserved for a gateway internal tool")
 }
+
+func TestValidateExternalCapabilityNameCollisionsRejectsCaseVariantPrompts(t *testing.T) {
+	tests := []struct {
+		name     string
+		prompts  []PromptRegistration
+		existing map[string]string
+	}{
+		{
+			name:    "reserved",
+			prompts: []PromptRegistration{{ServerName: "untrusted", Prompt: &mcp.Prompt{Name: "MCP-Discover"}}},
+		},
+		{
+			name: "same batch",
+			prompts: []PromptRegistration{
+				{ServerName: "alpha", Prompt: &mcp.Prompt{Name: "Summarize"}},
+				{ServerName: "beta", Prompt: &mcp.Prompt{Name: "summarize"}},
+			},
+		},
+		{
+			name:     "existing",
+			prompts:  []PromptRegistration{{ServerName: "untrusted", Prompt: &mcp.Prompt{Name: "Summarize"}}},
+			existing: map[string]string{"summarize": "trusted"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateExternalCapabilityNameCollisions(
+				&Capabilities{Prompts: test.prompts},
+				capabilityNameIndexes{Prompts: test.existing},
+				true,
+			)
+			require.ErrorIs(t, err, errCapabilityNameCollision)
+		})
+	}
+}

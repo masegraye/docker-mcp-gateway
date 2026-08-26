@@ -165,6 +165,10 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 					prefix := g.getToolNamePrefix(serverConfig)
 
 					for _, tool := range tools.Tools {
+						if tool == nil {
+							log.Logf("  > Ignoring invalid nil tool from %s", serverConfig.Name)
+							continue
+						}
 						if !isToolEnabled(g.configuration, serverConfig.Name, serverConfig.Spec.Image, tool.Name, g.ToolNames) {
 							continue
 						}
@@ -194,6 +198,10 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 					telemetry.RecordPromptList(ctx, serverConfig.Name, len(prompts.Prompts))
 
 					for _, prompt := range prompts.Prompts {
+						if prompt == nil {
+							log.Logf("  > Ignoring invalid nil prompt from %s", serverConfig.Name)
+							continue
+						}
 						capabilities.Prompts = append(capabilities.Prompts, PromptRegistration{
 							ServerName: serverConfig.Name,
 							Prompt:     prompt,
@@ -208,6 +216,10 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 					telemetry.RecordResourceList(ctx, serverConfig.Name, len(resources.Resources))
 
 					for _, resource := range resources.Resources {
+						if resource == nil {
+							log.Logf("  > Ignoring invalid nil resource from %s", serverConfig.Name)
+							continue
+						}
 						capabilities.Resources = append(capabilities.Resources, ResourceRegistration{
 							ServerName: serverConfig.Name,
 							Resource:   resource,
@@ -222,6 +234,10 @@ func (g *Gateway) listCapabilities(ctx context.Context, serverNames []string, cl
 					telemetry.RecordResourceTemplateList(ctx, serverConfig.Name, len(resourceTemplates.ResourceTemplates))
 
 					for _, resourceTemplate := range resourceTemplates.ResourceTemplates {
+						if resourceTemplate == nil {
+							log.Logf("  > Ignoring invalid nil resource template from %s", serverConfig.Name)
+							continue
+						}
 						capabilities.ResourceTemplates = append(capabilities.ResourceTemplates, ResourceTemplateRegistration{
 							ServerName:       serverConfig.Name,
 							ResourceTemplate: *resourceTemplate,

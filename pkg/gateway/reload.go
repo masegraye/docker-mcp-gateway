@@ -33,6 +33,7 @@ func (g *Gateway) reloadConfiguration(ctx context.Context, configuration Configu
 	if err != nil {
 		return fmt.Errorf("listing resources: %w", err)
 	}
+	capabilities = filterInvalidCapabilities(capabilities)
 	log.Log(">", len(capabilities.Tools), "tools listed in", time.Since(startList))
 
 	capabilities = g.filterToolCapabilitiesByPolicy(ctx, configuration, capabilities, "tool")
@@ -398,6 +399,7 @@ func (g *Gateway) reloadServerCapabilities(ctx context.Context, serverName strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to list capabilities for %s: %w", serverName, err)
 	}
+	newServerCaps = filterInvalidCapabilities(newServerCaps)
 
 	// Lock for reading/writing capability tracking
 	g.capabilitiesMu.Lock()
